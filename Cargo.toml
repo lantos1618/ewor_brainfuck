@@ -1,0 +1,10 @@
+[package]
+name = "bfa"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+syscalls = "0.6.18"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0" # For nicer test output

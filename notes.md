@@ -18,7 +18,7 @@ host:
     bind(sock, (struct sockaddr *)&addr, sizeof(addr));
     listen(sock, 10);
 
-    // 1:1 chat we want to be able to non-blocking
+    // 1:1 chat we want to be able to non-blocking litle harder
     client_sock = accept(sock, NULL, NULL);
     while (1) {
         send(client_sock, "Hello, client!", 14, 0);
@@ -28,7 +28,6 @@ host:
 
     close(client_sock);
     close(sock);
-```
 
 join:
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -37,6 +36,7 @@ join:
     while (1) {
         recv(client_sock, buffer, sizeof(buffer), 0);
         printf("%s", buffer);
+        send(client_sock, "Hello, host!", 14, 0);
     }
 ```
 
