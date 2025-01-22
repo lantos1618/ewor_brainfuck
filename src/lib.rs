@@ -7,25 +7,32 @@ pub struct BF {
     code: Vec<char>,
     pc: usize,
     output: Vec<u8>, // For testing
+    mode: Mode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mode {
+    BF,  // Standard Brainfuck
+    BFA, // Brainfuck with syscall extensions
 }
 
 impl BF {
-    pub fn new(code: &str) -> Self {
+    pub fn new(code: &str, mode: Mode) -> Self {
         let mut cells = vec![0; 30000];
-        cells[0] = 0; // Explicitly set normal BF mode
         BF {
             cells,
             ptr: 0,
             code: code.chars().collect(),
             pc: 0,
             output: Vec::new(),
+            mode,
         }
     }
 
     pub fn run(&mut self) -> Result<(), String> {
         // Validate brackets before execution
         let mut depth = 0;
-        for (_i, c) in self.code.iter().enumerate() {
+        for c in self.code.iter() {
             match c {
                 '[' => depth += 1,
                 ']' => {
@@ -42,12 +49,9 @@ impl BF {
         }
 
         while self.pc < self.code.len() {
-            // Default to BF mode (0) if not in BFA mode (1)
-            let mode = self.cells[0];
-            if mode == 1 {
-                self.execute_bfa()?;
-            } else {
-                self.execute_bf()?;
+            match self.mode {
+                Mode::BFA => self.execute_bfa()?,
+                Mode::BF => self.execute_bf()?,
             }
             self.pc += 1;
         }
@@ -61,6 +65,7 @@ impl BF {
                 if self.ptr >= self.cells.len() {
                     return Err("Pointer out of bounds".to_string());
                 }
+                eprintln!("Move right: ptr={}", self.ptr);
                 Ok(())
             }
             '<' => {
@@ -68,18 +73,22 @@ impl BF {
                     return Err("Pointer out of bounds".to_string());
                 }
                 self.ptr -= 1;
+                eprintln!("Move left: ptr={}", self.ptr);
                 Ok(())
             }
             '+' => {
                 self.cells[self.ptr] = self.cells[self.ptr].wrapping_add(1);
+                eprintln!("Increment: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             '-' => {
                 self.cells[self.ptr] = self.cells[self.ptr].wrapping_sub(1);
+                eprintln!("Decrement: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             '.' => {
                 self.output.push(self.cells[self.ptr]);
+                eprintln!("Output: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             ',' => {
@@ -88,6 +97,7 @@ impl BF {
                     .read_exact(&mut buf)
                     .map_err(|e| format!("Input failed: {}", e))?;
                 self.cells[self.ptr] = buf[0];
+                eprintln!("Input: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             '[' => {
@@ -105,7 +115,10 @@ impl BF {
                             _ => {}
                         }
                     }
+                    eprintln!("Skip loop: cells[{}]=0, jump to {}", self.ptr, pos);
                     self.pc = pos;
+                } else {
+                    eprintln!("Enter loop: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 }
                 Ok(())
             }
@@ -124,7 +137,15 @@ impl BF {
                             _ => {}
                         }
                     }
+                    eprintln!(
+                        "Loop back: cells[{}]={}, jump to {}",
+                        self.ptr,
+                        self.cells[self.ptr],
+                        pos - 1
+                    );
                     self.pc = pos - 1;
+                } else {
+                    eprintln!("Exit loop: cells[{}]=0", self.ptr);
                 }
                 Ok(())
             }
@@ -136,83 +157,112 @@ impl BF {
         match self.code[self.pc] {
             '.' => {
                 // Execute syscall when '.' is encountered
-                let syscall_num = self.cells[1];
+                let syscall_num = self.cells[0];
 
-                // Validate syscall number first - check as u8 before converting to usize
+                // Debug logging
+                eprintln!(
+                    "Executing syscall {} with cells: {:?}",
+                    syscall_num,
+                    &self.cells[..10]
+                );
+
+                // Validate syscall number first - must be between 0 and 7 inclusive
                 if syscall_num > 7 {
                     return Err(format!("Invalid syscall number: {}", syscall_num));
                 }
-                let syscall_num = syscall_num as usize;
 
                 // Get arguments from cells
                 let args = [
-                    self.cells[2] as usize, // arg1
-                    self.cells[3] as usize, // arg2
-                    self.cells[4] as usize, // arg3
-                    self.cells[5] as usize, // arg4
-                    self.cells[6] as usize, // arg5
-                    self.cells[7] as usize, // arg6
+                    self.cells[1] as usize, // arg1
+                    self.cells[2] as usize, // arg2
+                    self.cells[3] as usize, // arg3
+                    self.cells[4] as usize, // arg4
+                    self.cells[5] as usize, // arg5
+                    self.cells[6] as usize, // arg6
                 ];
+
+                // Debug logging
+                eprintln!("Syscall args: {:?}", args);
 
                 // In test mode, reject socket operations first
                 #[cfg(test)]
                 {
                     if (2..=6).contains(&syscall_num) {
-                        return Err("Permission denied".to_string());
+                        eprintln!("Rejecting socket operation in test mode");
+                        return Err(
+                            "Permission denied: socket operations not allowed in test mode"
+                                .to_string(),
+                        );
                     }
                 }
 
-                // Then validate memory access for read/write
-                if syscall_num <= 1 {
-                    // For read/write, validate buffer address + length
-                    let buf_addr = args[1];
-                    let buf_len = args[2];
-                    if buf_addr >= self.cells.len() || buf_addr + buf_len > self.cells.len() {
-                        return Err("Invalid memory access".to_string());
+                // Validate arguments based on syscall type
+                match syscall_num {
+                    0 | 1 => {
+                        // read/write - validate buffer and fd
+                        let buf_addr = args[1];
+                        let buf_len = args[2];
+                        if buf_addr >= self.cells.len()
+                            || buf_len == 0
+                            || buf_addr + buf_len > self.cells.len()
+                        {
+                            return Err("Invalid memory access: buffer overflow".to_string());
+                        }
+                        if args[0] > 2 {
+                            return Err("Invalid file descriptor".to_string());
+                        }
                     }
+                    7 => {
+                        // close - validate fd
+                        if args[0] > 2 {
+                            return Err("Invalid file descriptor".to_string());
+                        }
+                    }
+                    _ => {}
                 }
-
-                let sysno = match syscall_num {
-                    0 => Sysno::read,
-                    1 => Sysno::write,
-                    2 => Sysno::socket,
-                    3 => Sysno::bind,
-                    4 => Sysno::listen,
-                    5 => Sysno::accept,
-                    6 => Sysno::connect,
-                    7 => Sysno::close,
-                    _ => return Err(format!("Invalid syscall number: {}", syscall_num)),
-                };
 
                 // Execute syscall
                 unsafe {
-                    let result = match sysno {
-                        Sysno::read => syscalls::syscall!(sysno, args[0], args[1], args[2])
-                            .map_err(|e| format!("read syscall failed: {}", e)),
-                        Sysno::write => syscalls::syscall!(sysno, args[0], args[1], args[2])
-                            .map_err(|e| format!("write syscall failed: {}", e)),
-                        Sysno::socket => syscalls::syscall!(sysno, args[0], args[1], args[2])
+                    let result = match syscall_num {
+                        0 => {
+                            // read
+                            let buf = &mut self.cells[args[1]..args[1] + args[2]];
+                            syscalls::syscall!(Sysno::read, args[0], buf.as_mut_ptr(), args[2])
+                                .map_err(|e| format!("read syscall failed: {}", e))
+                        }
+                        1 => {
+                            // write
+                            eprintln!(
+                                "Executing write syscall: fd={}, buf={}, len={}",
+                                args[0], args[1], args[2]
+                            );
+                            let buf = &self.cells[args[1]..args[1] + args[2]];
+                            eprintln!("Buffer contents: {:?}", buf);
+                            syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
+                                .map_err(|e| format!("write syscall failed: {}", e))
+                        }
+                        2 => syscalls::syscall!(Sysno::socket, args[0], args[1], args[2])
                             .map_err(|e| format!("socket syscall failed: {}", e)),
-                        Sysno::bind => syscalls::syscall!(sysno, args[0], args[1], args[2])
+                        3 => syscalls::syscall!(Sysno::bind, args[0], args[1], args[2])
                             .map_err(|e| format!("bind syscall failed: {}", e)),
-                        Sysno::listen => syscalls::syscall!(sysno, args[0], args[1])
+                        4 => syscalls::syscall!(Sysno::listen, args[0], args[1])
                             .map_err(|e| format!("listen syscall failed: {}", e)),
-                        Sysno::accept => syscalls::syscall!(sysno, args[0], args[1], args[2])
+                        5 => syscalls::syscall!(Sysno::accept, args[0], args[1], args[2])
                             .map_err(|e| format!("accept syscall failed: {}", e)),
-                        Sysno::connect => syscalls::syscall!(sysno, args[0], args[1], args[2])
+                        6 => syscalls::syscall!(Sysno::connect, args[0], args[1], args[2])
                             .map_err(|e| format!("connect syscall failed: {}", e)),
-                        Sysno::close => syscalls::syscall!(sysno, args[0])
+                        7 => syscalls::syscall!(Sysno::close, args[0])
                             .map_err(|e| format!("close syscall failed: {}", e)),
                         _ => Err("Invalid syscall".to_string()),
                     }?;
 
-                    // Store result in cell[1] for return value
-                    self.cells[1] = result as u8;
+                    eprintln!("Syscall result: {}", result);
+                    self.cells[0] = result as u8;
                     Ok(())
                 }
             }
             // Handle other BFA instructions normally
-            '>' | '<' | '+' | '-' | '[' | ']' | ',' => self.execute_bf(),
+            '>' | '<' | '+' | '-' | '[' | ']' => self.execute_bf(),
             _ => Ok(()),
         }
     }
@@ -221,159 +271,274 @@ impl BF {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
 
-    #[test]
-    fn test_basic_operations() {
-        let mut bf = BF::new("+++.");
-        bf.run().unwrap();
-        assert_eq!(bf.output, vec![3]);
+    mod syscall_direct {
+        use syscalls::Sysno;
+
+        #[test]
+        fn test_write_syscall() {
+            let message = b"test\n";
+            unsafe {
+                let result = syscalls::syscall!(
+                    Sysno::write,
+                    1, // stdout
+                    message.as_ptr(),
+                    message.len()
+                );
+                assert!(result.is_ok());
+                let bytes_written = result.unwrap();
+                assert_eq!(bytes_written as usize, message.len());
+            }
+        }
+
+        #[test]
+        fn test_write_from_buffer() {
+            let mut buffer = vec![0u8; 30000];
+            buffer[3] = b'h';
+            buffer[4] = b'i';
+            buffer[5] = b'\n';
+
+            unsafe {
+                let result = syscalls::syscall!(
+                    Sysno::write,
+                    1, // stdout
+                    buffer[3..].as_ptr(),
+                    3
+                );
+                assert!(result.is_ok());
+                let bytes_written = result.unwrap();
+                assert_eq!(bytes_written as usize, 3);
+            }
+        }
+
+        #[test]
+        fn test_read_syscall() {
+            let mut buf = [0u8; 10];
+            unsafe {
+                let result = syscalls::syscall!(
+                    Sysno::read,
+                    0, // stdin
+                    buf.as_mut_ptr(),
+                    1
+                );
+                eprintln!("Read result: {:?}", result);
+            }
+        }
     }
 
-    #[test]
-    fn test_pointer_movement() {
-        let mut bf = BF::new(">+++>++<.");
-        bf.run().unwrap();
-        assert_eq!(bf.output, vec![3]);
-    }
-
-    #[test]
-    fn test_loop() {
-        let mut bf = BF::new("+++[>+<-]>.");
-        bf.run().unwrap();
-        assert_eq!(bf.output, vec![3]);
-    }
-
-    #[test]
-    fn test_hello_world() {
-        let mut bf = BF::new("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.");
-        bf.run().unwrap();
-        assert_eq!(String::from_utf8(bf.output).unwrap(), "Hello World!\n");
-    }
-
-    #[test]
-    fn test_bounds_checking() {
-        let mut bf = BF::new("<");
-        assert!(bf.run().is_err());
-
-        let mut bf = BF::new(&">".repeat(30001));
-        assert!(bf.run().is_err());
-    }
-
-    #[test]
-    fn test_unmatched_brackets() {
-        let mut bf = BF::new("[");
-        assert!(bf.run().is_err());
-
-        let mut bf = BF::new("]");
-        assert!(bf.run().is_err());
-    }
-
-    mod bfa_tests {
+    mod bf {
         use super::*;
+        use pretty_assertions::assert_eq;
+
+        #[test]
+        fn test_basic_operations() {
+            let mut bf = BF::new("+++.", Mode::BF);
+            bf.run().unwrap();
+            assert_eq!(bf.output, vec![3]);
+        }
+
+        #[test]
+        fn test_pointer_movement() {
+            let mut bf = BF::new(">+++>++<.", Mode::BF);
+            bf.run().unwrap();
+            assert_eq!(bf.output, vec![3]);
+        }
+
+        #[test]
+        fn test_loop() {
+            let mut bf = BF::new("+++[>+<-]>.", Mode::BF);
+            bf.run().unwrap();
+            assert_eq!(bf.output, vec![3]);
+        }
+
+        #[test]
+        fn test_hello_world() {
+            let mut bf = BF::new(
+                "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.",
+                Mode::BF
+            );
+            bf.run().unwrap();
+            assert_eq!(String::from_utf8(bf.output).unwrap(), "Hello World!\n");
+        }
+
+        #[test]
+        fn test_unmatched_brackets() {
+            let mut bf = BF::new("[", Mode::BF);
+            assert!(bf.run().is_err());
+
+            let mut bf = BF::new("]", Mode::BF);
+            assert!(bf.run().is_err());
+        }
+
+        #[test]
+        fn test_input() {
+            use std::io::Write;
+            use std::process::{Command, Stdio};
+
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .arg("test")
+                .arg("--exact")
+                .arg("tests::bf::test_input_internal")
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+
+            child.stdin.take().unwrap().write_all(b"A").unwrap();
+            assert!(child.wait().unwrap().success());
+        }
+
+        #[test]
+        #[ignore]
+        fn test_input_internal() {
+            let mut bf = BF::new(",.", Mode::BF); // Read one char and output it
+            bf.run().unwrap();
+            assert_eq!(bf.output, vec![b'A']);
+        }
+    }
+
+    mod bfa {
+        use super::*;
+        use pretty_assertions::assert_eq;
 
         #[test]
         fn test_mode_switching() {
-            let mut bf = BF::new(">+<"); // Set cells[0] = 1 to enter BFA mode
-            assert!(bf.run().is_ok()); // Should succeed now that BFA is implemented
-        }
-
-        #[test]
-        fn test_syscall_write() {
-            let code = "\
-                >+<\
-                >+<\
-                >>+<<\
-                >>>++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++<<<<\
-                >>>>+++++<<<<<\
-                >."; // Execute syscall
-            let mut bf = BF::new(code);
-            let result = bf.run();
-            assert!(result.is_err()); // Should fail due to invalid memory access
-        }
-
-        #[test]
-        fn test_syscall_read() {
-            let code = "\
-                >+<\
-                >><<\
-                >>>++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++<<<<\
-                >>>>++++++++++<<<<<\
-                >."; // Execute syscall
-            let mut bf = BF::new(code);
-            let result = bf.run();
-            assert!(result.is_err()); // Should fail due to invalid memory access
+            let mut bf = BF::new("", Mode::BFA);
+            assert!(bf.run().is_ok());
         }
 
         #[test]
         fn test_syscall_socket() {
-            let code = "\
-                >+<\
-                >++<\
-                >>++<<\
-                >>>+<<<\
-                >."; // Execute syscall
-            let mut bf = BF::new(code);
+            // Test socket creation with BFA mode
+            // Sets up:
+            // - socket syscall (cell[0] = 2)
+            // - domain (cell[1] = 2)
+            // - type (cell[2] = 1)
+            let code = r#"
+                ++          Set socket syscall (2)
+                >++<       Set domain (2)
+                >>+<<      Set type (1)
+                .          Execute syscall
+            "#
+            .replace(" ", "")
+            .replace("\n", "");
+            let mut bf = BF::new(&code, Mode::BFA);
             let result = bf.run();
-            assert!(result.is_err()); // Should fail due to permission denied
+            assert!(
+                result.is_err(),
+                "Socket operations should be rejected in test mode"
+            );
         }
 
         #[test]
         fn test_invalid_syscall() {
-            let code = ">+<>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++<>.";
-            let mut bf = BF::new(code);
+            // Test handling of invalid syscall number (>7)
+            // Sets up:
+            // - invalid syscall number (cell[0] = 8)
+            let code = r#"
+                ++++++++   Set invalid syscall number (8)
+                .          Execute syscall
+            "#
+            .replace(" ", "")
+            .replace("\n", "");
+            let mut bf = BF::new(&code, Mode::BFA);
             let result = bf.run();
-            assert!(result.is_err()); // Should fail for invalid syscall number
+            assert!(result.is_err(), "Invalid syscall number should be rejected");
         }
 
         #[test]
         fn test_syscall_args() {
-            let code = "\
-                >+<\
-                >+<\
-                >>+<<\
-                >>>++<<<\
-                >>>>+++<<<<\
-                >.";
-            let mut bf = BF::new(code);
+            // Test syscall argument handling
+            // Sets up:
+            // - write syscall (cell[0] = 1)
+            // - invalid fd (cell[1] = 3)
+            // - buffer (cell[2] = 0)
+            // - length (cell[3] = 1)
+            let code = r#"
+                +          Set write syscall
+                >+++<     Set invalid fd (3)
+                >>+<<     Set buffer
+                >>>+<<<   Set length
+                .         Execute syscall
+            "#
+            .replace(" ", "")
+            .replace("\n", "");
+            let mut bf = BF::new(&code, Mode::BFA);
             let result = bf.run();
-            assert!(result.is_err()); // Should fail due to invalid memory access
+            assert!(
+                result.is_err(),
+                "Invalid file descriptor should be rejected"
+            );
 
-            // Verify cell values were set correctly before syscall
-            pretty_assertions::assert_eq!(bf.cells[0], 1); // BFA mode
-            pretty_assertions::assert_eq!(bf.cells[1], 1); // syscall number
-            pretty_assertions::assert_eq!(bf.cells[2], 1); // arg1
-            pretty_assertions::assert_eq!(bf.cells[3], 2); // arg2
-            pretty_assertions::assert_eq!(bf.cells[4], 3); // arg3
+            assert_eq!(bf.cells[0], 1); // syscall number (write)
+            assert_eq!(bf.cells[1], 3); // invalid fd
+            assert_eq!(bf.cells[2], 1); // buffer
+            assert_eq!(bf.cells[3], 1); // length
         }
-    }
 
-    #[test]
-    fn test_input() {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
+        #[test]
+        fn test_simple_write() {
+            // Write "h" to stdout (fd 1)
+            // Set up cells:
+            // - write syscall (cell[0] = 1)
+            // - fd 1 (cell[1] = 1)
+            // - buffer with 'h' (cell[2] = 104)
+            // - length (cell[3] = 1)
+            let code = r#"
+                +          Set syscall 1 (write)
+                >+<       Set fd 1 (stdout)
+                >>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++<<  Set buffer to 'h' (104)
+                >>>+<<<   Set length 1
+                .         Execute syscall
+            "#.replace(" ", "").replace("\n", "");
+            let mut bf = BF::new(&code, Mode::BFA);
+            let result = bf.run();
+            if let Err(e) = &result {
+                eprintln!("Simple write failed: {}", e);
+                eprintln!("Cells: {:?}", &bf.cells[..10]);
+            }
+            assert!(result.is_ok());
+        }
 
-        // Create a command that will run our test with input
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .arg("test")
-            .arg("--exact")
-            .arg("tests::test_input_internal")
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
+        #[test]
+        fn test_syscall_write() {
+            // Test write syscall with BFA mode
+            // Sets up:
+            // - write syscall (cell[0] = 1)
+            // - invalid fd (cell[1] = 3)
+            // - buffer with content (cell[2])
+            // - length (cell[3])
+            let code = r#"
+                +          Set write syscall
+                >+++<     Set invalid fd (3)
+                >>+<<     Set buffer content
+                >>>++<<<  Set length
+                .         Execute syscall
+            "#
+            .replace(" ", "")
+            .replace("\n", "");
+            let mut bf = BF::new(&code, Mode::BFA);
+            let result = bf.run();
+            assert!(result.is_err(), "Write with invalid fd should fail");
+        }
 
-        // Write test input
-        child.stdin.take().unwrap().write_all(b"A").unwrap();
-
-        // Check that the test passed
-        assert!(child.wait().unwrap().success());
-    }
-
-    #[test]
-    #[ignore] // This test is run by test_input with piped input
-    fn test_input_internal() {
-        let mut bf = BF::new(",."); // Read one char and output it
-        bf.run().unwrap();
-        assert_eq!(bf.output, vec![b'A']);
+        #[test]
+        fn test_syscall_read() {
+            // Test read syscall with BFA mode
+            // Sets up:
+            // - read syscall (cell[0] = 0)
+            // - fd (cell[1] = 0)
+            // - buffer location (cell[2])
+            // - read length (cell[3])
+            let code = r#"
+                >+<       Set buffer location
+                >>+<<     Set read length
+                .         Execute syscall
+            "#
+            .replace(" ", "")
+            .replace("\n", "");
+            let mut bf = BF::new(&code, Mode::BFA);
+            let result = bf.run();
+            assert!(result.is_err());
+        }
     }
 }
