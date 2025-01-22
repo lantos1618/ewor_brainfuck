@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::io::Write;
 use syscalls::Sysno;
 
 pub struct BF {
@@ -91,6 +92,9 @@ impl BF {
             }
             '.' => {
                 self.output.push(self.cells[self.ptr]);
+                // Also write to stdout
+                print!("{}", self.cells[self.ptr] as char);
+                std::io::stdout().flush().map_err(|e| e.to_string())?;
                 Ok(())
             }
             ',' => {
