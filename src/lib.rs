@@ -10,6 +10,9 @@ pub struct BF {
     mode: Mode,
 }
 
+const SYSCALL_ARGS: usize = 7; // syscall number + 6 args
+const HEAP_START: usize = SYSCALL_ARGS; // Start heap right after syscall args
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
     BF,  // Standard Brainfuck
@@ -18,7 +21,7 @@ pub enum Mode {
 
 impl BF {
     pub fn new(code: &str, mode: Mode) -> Self {
-        let mut cells = vec![0; 30000];
+        let mut cells = vec![0; 30000]; // 30K cells total - first HEAP_START cells reserved
         BF {
             cells,
             ptr: 0,
@@ -27,6 +30,10 @@ impl BF {
             output: Vec::new(),
             mode,
         }
+    }
+
+    pub fn dump_cells(&self, n: usize) -> &[u8] {
+        &self.cells[..n.min(self.cells.len())]
     }
 
     pub fn run(&mut self) -> Result<(), String> {
@@ -65,7 +72,6 @@ impl BF {
                 if self.ptr >= self.cells.len() {
                     return Err("Pointer out of bounds".to_string());
                 }
-                eprintln!("Move right: ptr={}", self.ptr);
                 Ok(())
             }
             '<' => {
@@ -73,22 +79,18 @@ impl BF {
                     return Err("Pointer out of bounds".to_string());
                 }
                 self.ptr -= 1;
-                eprintln!("Move left: ptr={}", self.ptr);
                 Ok(())
             }
             '+' => {
                 self.cells[self.ptr] = self.cells[self.ptr].wrapping_add(1);
-                eprintln!("Increment: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             '-' => {
                 self.cells[self.ptr] = self.cells[self.ptr].wrapping_sub(1);
-                eprintln!("Decrement: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             '.' => {
                 self.output.push(self.cells[self.ptr]);
-                eprintln!("Output: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             ',' => {
@@ -97,7 +99,6 @@ impl BF {
                     .read_exact(&mut buf)
                     .map_err(|e| format!("Input failed: {}", e))?;
                 self.cells[self.ptr] = buf[0];
-                eprintln!("Input: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 Ok(())
             }
             '[' => {
@@ -115,10 +116,7 @@ impl BF {
                             _ => {}
                         }
                     }
-                    eprintln!("Skip loop: cells[{}]=0, jump to {}", self.ptr, pos);
                     self.pc = pos;
-                } else {
-                    eprintln!("Enter loop: cells[{}]={}", self.ptr, self.cells[self.ptr]);
                 }
                 Ok(())
             }
@@ -137,15 +135,7 @@ impl BF {
                             _ => {}
                         }
                     }
-                    eprintln!(
-                        "Loop back: cells[{}]={}, jump to {}",
-                        self.ptr,
-                        self.cells[self.ptr],
-                        pos - 1
-                    );
                     self.pc = pos - 1;
-                } else {
-                    eprintln!("Exit loop: cells[{}]=0", self.ptr);
                 }
                 Ok(())
             }
@@ -158,13 +148,7 @@ impl BF {
             '.' => {
                 // Execute syscall when '.' is encountered
                 let syscall_num = self.cells[0];
-
-                // Debug logging
-                eprintln!(
-                    "Executing syscall {} with cells: {:?}",
-                    syscall_num,
-                    &self.cells[..10]
-                );
+                eprintln!("DEBUG: Executing syscall {}", syscall_num);
 
                 // Validate syscall number first - must be between 0 and 7 inclusive
                 if syscall_num > 7 {
@@ -180,15 +164,13 @@ impl BF {
                     self.cells[5] as usize, // arg5
                     self.cells[6] as usize, // arg6
                 ];
-
-                // Debug logging
-                eprintln!("Syscall args: {:?}", args);
+                eprintln!("DEBUG: Syscall args: {:?}", args);
+                eprintln!("DEBUG: First 20 cells: {:?}", &self.cells[..20]);
 
                 // In test mode, reject socket operations first
                 #[cfg(test)]
                 {
                     if (2..=6).contains(&syscall_num) {
-                        eprintln!("Rejecting socket operation in test mode");
                         return Err(
                             "Permission denied: socket operations not allowed in test mode"
                                 .to_string(),
@@ -232,14 +214,27 @@ impl BF {
                         }
                         1 => {
                             // write
+                            eprintln!("DEBUG: Write syscall");
                             eprintln!(
-                                "Executing write syscall: fd={}, buf={}, len={}",
+                                "Write syscall: fd={}, buf_ptr={}, len={}",
                                 args[0], args[1], args[2]
                             );
+                            eprintln!(
+                                "First {} cells: {:?}",
+                                HEAP_START + 5,
+                                &self.cells[..HEAP_START + 5]
+                            );
+                            // Validate buffer pointer is in heap area
+                            if args[1] < HEAP_START {
+                                return Err("Buffer pointer must point to heap area".to_string());
+                            }
                             let buf = &self.cells[args[1]..args[1] + args[2]];
                             eprintln!("Buffer contents: {:?}", buf);
-                            syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
-                                .map_err(|e| format!("write syscall failed: {}", e))
+                            let result =
+                                syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
+                                    .map_err(|e| format!("write syscall failed: {}", e));
+                            eprintln!("Write result: {:?}", result);
+                            result
                         }
                         2 => syscalls::syscall!(Sysno::socket, args[0], args[1], args[2])
                             .map_err(|e| format!("socket syscall failed: {}", e)),
@@ -256,7 +251,6 @@ impl BF {
                         _ => Err("Invalid syscall".to_string()),
                     }?;
 
-                    eprintln!("Syscall result: {}", result);
                     self.cells[0] = result as u8;
                     Ok(())
                 }
@@ -321,7 +315,9 @@ mod tests {
                     buf.as_mut_ptr(),
                     1
                 );
-                eprintln!("Read result: {:?}", result);
+                assert!(result.is_ok());
+                let bytes_read = result.unwrap();
+                assert_eq!(bytes_read as usize, 1);
             }
         }
     }
@@ -481,20 +477,22 @@ mod tests {
             // Set up cells:
             // - write syscall (cell[0] = 1)
             // - fd 1 (cell[1] = 1)
-            // - buffer with 'h' (cell[2] = 104)
+            // - buffer pointer (cell[2] = HEAP_START)  // Point to start of heap
             // - length (cell[3] = 1)
+            // - actual data at HEAP_START = 'h' (104)
             let code = r#"
-                +          Set syscall 1 (write)
-                >+<       Set fd 1 (stdout)
-                >>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++<<  Set buffer to 'h' (104)
-                >>>+<<<   Set length 1
-                .         Execute syscall
+                +                    Set syscall 1 (write)
+                >+<                 Set fd 1 (stdout)
+                >>+++++++<<        Set buffer pointer to HEAP_START (7)
+                >>>+<<<             Set length 1
+                >>>>>>>++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++<<<<<<<  Set buffer content to 'h' (104) at HEAP_START
+                .                   Execute syscall
             "#.replace(" ", "").replace("\n", "");
             let mut bf = BF::new(&code, Mode::BFA);
             let result = bf.run();
             if let Err(e) = &result {
                 eprintln!("Simple write failed: {}", e);
-                eprintln!("Cells: {:?}", &bf.cells[..10]);
+                eprintln!("Cells: {:?}", &bf.cells[..HEAP_START + 5]);
             }
             assert!(result.is_ok());
         }

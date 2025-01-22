@@ -54,6 +54,8 @@ match cells[0]
  | 1 => we do sys call
  | 0 => we do not do sys call, normal BF
 
+nope nevermind that was a bad idea. We should just have bf -a for bfa and bf for bf.
+
 
 
 match char
@@ -69,17 +71,16 @@ match char
 
 sys_call cells table
 
-0 => is_sys_call
-1 => sys_call_id
-2 => sys_call_arg1
-3 => sys_call_arg2
-4 => sys_call_arg3
-5 => sys_call_arg4
-6 => sys_call_arg5
-7 => sys_call_arg6
-8 => sys_call_arg7
-9 => sys_call_arg8
-10 => sys_call_arg9
+0 => sys_call_id
+1 => sys_call_arg1
+2 => sys_call_arg2
+3 => sys_call_arg3
+4 => sys_call_arg4
+5 => sys_call_arg5
+6 => sys_call_arg6
+7 => sys_call_arg7
+8 => sys_call_arg8
+9 => sys_call_arg9
 10 => sys_call_arg10
 
 
