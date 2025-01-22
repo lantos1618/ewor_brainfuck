@@ -388,7 +388,7 @@ mod tests {
         }
 
         #[test]
-        #[ignore]
+        #[ignore = "This test is only meant to be run as a subprocess of test_input"]
         fn test_input_internal() {
             let mut bf = BF::new(",.", Mode::BF); // Read one char and output it
             bf.run().unwrap();
