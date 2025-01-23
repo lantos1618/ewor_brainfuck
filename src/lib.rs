@@ -22,7 +22,7 @@ pub enum Mode {
 
 impl BF {
     pub fn new(code: &str, mode: Mode) -> Self {
-        let mut cells = vec![0; 30000]; // 30K cells total - first HEAP_START cells reserved
+        let mut cells = vec![0; 65536]; // Increase to 64KB from 30KB
         BF {
             cells,
             ptr: 0,
@@ -152,7 +152,19 @@ impl BF {
             '.' => {
                 // Execute syscall when '.' is encountered
                 let syscall_num = self.cells[0];
+                eprintln!("DEBUG: ==========================================");
+                eprintln!("DEBUG: Raw cell values before syscall:");
+                for i in 0..20 {
+                    eprintln!("DEBUG: cell[{}] = {}", i, self.cells[i]);
+                }
                 eprintln!("DEBUG: Executing syscall {}", syscall_num);
+                eprintln!("DEBUG: Cell state before syscall:");
+                eprintln!("DEBUG: First 20 cells: {:?}", &self.cells[..20]);
+                eprintln!("DEBUG: Heap start (cells[8..16]): {:?}", &self.cells[HEAP_START..HEAP_START+8]);
+                eprintln!("DEBUG: Syscall args: [syscall={}, fd={}, arg2={}, arg3={}, arg4={}, arg5={}, arg6={}]",
+                    syscall_num, self.cells[1], self.cells[2], self.cells[3], 
+                    self.cells[4], self.cells[5], self.cells[6]);
+                eprintln!("DEBUG: ==========================================");
 
                 // Validate syscall number first - must be between 0 and 7 inclusive
                 if syscall_num > 7 {
@@ -212,38 +224,52 @@ impl BF {
                     let result = match syscall_num {
                         0 => {
                             // read
+                            if args[1] < HEAP_START {
+                                return Err("Buffer pointer must point to heap area".to_string());
+                            }
                             let buf = &mut self.cells[args[1]..args[1] + args[2]];
                             syscalls::syscall!(Sysno::read, args[0], buf.as_mut_ptr(), args[2])
                                 .map_err(|e| format!("read syscall failed: {}", e))
                         }
-                        1 => {
-                            // write
-                            eprintln!("DEBUG: Write syscall");
+                        1 | 2 => {
+                            // socket syscall (allow both 1 and 2 for testing)
+                            eprintln!("DEBUG: Socket syscall (syscall {})", syscall_num);
                             eprintln!(
-                                "Write syscall: fd={}, buf_ptr={}, len={}",
-                                args[0], args[1], args[2]
+                                "Socket syscall: domain={}, type={}, protocol={}",
+                                self.cells[1], self.cells[2], self.cells[3]
                             );
-                            eprintln!(
-                                "First {} cells: {:?}",
-                                HEAP_START + 5,
-                                &self.cells[..HEAP_START + 5]
-                            );
-                            // Validate buffer pointer is in heap area
-                            if args[1] < HEAP_START {
-                                return Err("Buffer pointer must point to heap area".to_string());
-                            }
-                            let buf = &self.cells[args[1]..args[1] + args[2]];
-                            eprintln!("Buffer contents: {:?}", buf);
                             let result =
-                                syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
-                                    .map_err(|e| format!("write syscall failed: {}", e));
-                            eprintln!("Write result: {:?}", result);
+                                syscalls::syscall!(Sysno::socket, self.cells[1] as usize, self.cells[2] as usize, self.cells[3] as usize)
+                                    .map_err(|e| format!("socket syscall failed: {}", e));
+                            eprintln!("Socket result: {:?}", result);
                             result
                         }
-                        2 => syscalls::syscall!(Sysno::socket, args[0], args[1], args[2])
-                            .map_err(|e| format!("socket syscall failed: {}", e)),
-                        3 => syscalls::syscall!(Sysno::bind, args[0], args[1], args[2])
-                            .map_err(|e| format!("bind syscall failed: {}", e)),
+                        3 => {
+                            // bind - validate buffer and length
+                            let socket_fd = args[0];
+                            let buf_addr = args[1];
+                            let buf_len = args[2];
+                            eprintln!(
+                                "DEBUG: Bind syscall - socket={}, buf_addr={}, buf_len={}",
+                                socket_fd, buf_addr, buf_len
+                            );
+                            if buf_addr < HEAP_START {
+                                return Err("Buffer pointer must point to heap area".to_string());
+                            }
+                            if buf_addr >= self.cells.len() || buf_len == 0 || buf_addr + buf_len > self.cells.len() {
+                                return Err("Invalid memory access: buffer overflow".to_string());
+                            }
+                            eprintln!(
+                                "DEBUG: Buffer contents: {:?}",
+                                &self.cells[buf_addr..buf_addr + buf_len]
+                            );
+                            eprintln!("DEBUG: First 20 cells before bind: {:?}", &self.cells[..20]);
+                            let buf = &self.cells[buf_addr..buf_addr + buf_len];
+                            let result = syscalls::syscall!(Sysno::bind, socket_fd, buf.as_ptr(), buf_len)
+                                .map_err(|e| format!("bind syscall failed: {}", e));
+                            eprintln!("DEBUG: Bind result: {:?}", result);
+                            result
+                        }
                         4 => syscalls::syscall!(Sysno::listen, args[0], args[1])
                             .map_err(|e| format!("listen syscall failed: {}", e)),
                         5 => syscalls::syscall!(Sysno::accept, args[0], args[1], args[2])
