@@ -1,11 +1,12 @@
 [package]
-name = "bfa"
+name = "ewor_brainfuck"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 syscalls = "0.6.15"
 libc = "0.2"
+pretty_assertions = "1.4.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0" # For nicer test output
@@ -13,3 +14,7 @@ pretty_assertions = "1.4.0" # For nicer test output
 [[bin]]
 name = "syscall_test"
 path = "src/syscall_test.rs"
+
+[[example]]
+name = "hello_bfl"
+path = "examples/hello_bfl.rs"

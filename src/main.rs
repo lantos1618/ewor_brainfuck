@@ -1,4 +1,4 @@
-use bfa::{Mode, BF};
+use ewor_brainfuck::{Mode, BF};
 use std::env;
 use std::fs;
 

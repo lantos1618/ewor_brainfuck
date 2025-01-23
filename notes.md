@@ -78,10 +78,6 @@ sys_call cells table
 4 => sys_call_arg4
 5 => sys_call_arg5
 6 => sys_call_arg6
-7 => sys_call_arg7
-8 => sys_call_arg8
-9 => sys_call_arg9
-10 => sys_call_arg10
 
 
 cells[0] = rax (syscall number)

@@ -2,6 +2,8 @@ use std::io::Read;
 use std::io::Write;
 use syscalls::Sysno;
 
+pub mod bfl;
+
 pub struct BF {
     cells: Vec<u8>,
     ptr: usize,
@@ -22,7 +24,7 @@ pub enum Mode {
 
 impl BF {
     pub fn new(code: &str, mode: Mode) -> Self {
-        let mut cells = vec![0; 65536]; // Increase to 64KB from 30KB
+        let cells = vec![0; 65536]; // Increase to 64KB from 30KB
         BF {
             cells,
             ptr: 0,

@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io;
 use syscalls::{syscall, Sysno};
 
 const PORT: u16 = 8080;
