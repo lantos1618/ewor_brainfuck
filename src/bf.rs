@@ -216,7 +216,16 @@ impl BF {
                             // write
                             let buf = &self.cells[args[1]..args[1] + args[2]];
                             // Print the buffer contents for debugging
-                            println!("Writing buffer: {:?}", buf);
+                            println!("Write syscall:");
+                            println!("  fd: {}", args[0]);
+                            println!("  buffer pointer: {}", args[1]);
+                            println!("  length: {}", args[2]);
+                            println!("  buffer contents: {:?}", buf);
+                            println!(
+                                "  buffer as chars: {:?}",
+                                buf.iter().map(|&b| b as char).collect::<Vec<_>>()
+                            );
+                            println!("  cells[0..15]: {:?}", &self.cells[0..15]);
                             syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
                                 .map_err(|e| {
                                     BFError::SyscallFailed(format!("write syscall failed: {}", e))

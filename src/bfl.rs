@@ -103,8 +103,8 @@ impl BFLCompiler {
 
                 match expr.as_ref() {
                     BFLNode::String(s) => {
-                        // Store string data starting at next_var_location
-                        let str_start = self.next_var_location;
+                        // Store string data right after the variable's location
+                        let str_start = location + 1;
 
                         // Store the pointer in the variable
                         self.move_to(location);
@@ -116,6 +116,11 @@ impl BFLCompiler {
                         for c in s.chars() {
                             self.output.push_str("[-]"); // Clear current cell
                             let ascii_val = c as u8;
+                            // Print debug info
+                            println!(
+                                "Storing character '{}' with ASCII value {} at cell {}",
+                                c, ascii_val, str_start
+                            );
                             self.output.push_str(&"+".repeat(ascii_val as usize)); // Set to ASCII value
                             self.output.push('>'); // Move to next cell
                         }
@@ -125,7 +130,7 @@ impl BFLCompiler {
                         }
 
                         // Update next_var_location to after the string data
-                        self.next_var_location = str_start + s.len();
+                        self.next_var_location = str_start + s.len() + 1;
                     }
                     _ => {
                         self.move_to(location);
@@ -170,7 +175,7 @@ impl BFLCompiler {
                 // Store current position
                 let start_pos = self.current_position();
 
-                // First, clear the syscall area (cells 0-7)
+                // First, clear ONLY the syscall area (cells 0-7)
                 for i in 0..8 {
                     self.move_to(i);
                     self.output.push_str("[-]");
@@ -194,16 +199,27 @@ impl BFLCompiler {
                             self.move_to(arg_pos);
                             self.output.push_str("[-]");
 
-                            // Copy the variable's value (which is a pointer to the string) to the argument position
+                            // Move to variable location and copy its value to the argument position
                             self.move_to(var_loc);
-                            self.output.push_str("[->+>+<<]"); // Copy to temp1 and temp2
-                            self.output.push_str(">>[-<<+>>]<<"); // Move temp2 back to source
-                            self.move_to(var_loc + 1);
-                            self.output.push_str("[-<+>]"); // Move temp1 to arg position
-
-                            // Clear any temporary cells we used
-                            self.move_to(var_loc + 1);
-                            self.output.push_str("[-]");
+                            // Simple copy loop - copy directly to arg_pos
+                            self.output.push_str("[");
+                            // Decrement current cell
+                            self.output.push('-');
+                            // Move to arg_pos and increment
+                            let diff = if arg_pos > var_loc {
+                                format!("{}", ">".repeat(arg_pos - var_loc))
+                            } else {
+                                format!("{}", "<".repeat(var_loc - arg_pos))
+                            };
+                            self.output.push_str(&diff);
+                            self.output.push('+');
+                            // Move back to source
+                            if arg_pos > var_loc {
+                                self.output.push_str(&"<".repeat(arg_pos - var_loc));
+                            } else {
+                                self.output.push_str(&">".repeat(var_loc - arg_pos));
+                            }
+                            self.output.push(']');
                         }
                         _ => {
                             self.move_to(arg_pos);
@@ -620,6 +636,67 @@ mod tests {
             if *cell != 0 {
                 println!("Cell {}: {} ({})", i, cell, *cell as char);
             }
+        }
+    }
+
+    #[test]
+    fn test_single_char_write() {
+        let mut compiler = BFLCompiler::new();
+        println!("\n=== Starting Single Char Write Test ===\n");
+
+        let program = BFLNode::Block(vec![
+            // Store just "A" in a variable
+            BFLNode::Assign(
+                "msg".to_string(),
+                Box::new(BFLNode::String("A".to_string())),
+            ),
+            // Write syscall
+            BFLNode::Syscall(
+                Box::new(BFLNode::Number(1)), // write syscall
+                vec![
+                    BFLNode::Number(1),                   // stdout
+                    BFLNode::Variable("msg".to_string()), // buffer pointer
+                    BFLNode::Number(1),                   // length
+                ],
+            ),
+        ]);
+
+        compiler.compile(&program).unwrap();
+        let bf_code = compiler.get_output();
+        println!("Generated BF code:\n{}", bf_code);
+
+        let mut bf = BF::new(bf_code, Mode::BFA);
+        println!("\n--- Memory before execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            println!(
+                "Cell {}: {} ({})",
+                i,
+                cell,
+                if *cell >= 32 && *cell <= 126 {
+                    *cell as char
+                } else {
+                    ' '
+                }
+            );
+        }
+
+        println!("\n--- Program Output: ---");
+        bf.run().unwrap();
+
+        println!("\n--- Memory after execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            println!(
+                "Cell {}: {} ({})",
+                i,
+                cell,
+                if *cell >= 32 && *cell <= 126 {
+                    *cell as char
+                } else {
+                    ' '
+                }
+            );
         }
     }
 }
