@@ -293,13 +293,12 @@ mod tests {
     }
 
     #[test]
-    fn test_hello_world_syscall() {
+    fn test_hello_world() {
         let mut compiler = BFLCompiler::new();
-
-        println!("\n=== Starting Hello World Syscall Test ===\n");
+        println!("\n=== Starting Hello World Test ===\n");
 
         let program = BFLNode::Block(vec![
-            // Store the string in a variable
+            // Store "Hello, World!\n" in a variable
             BFLNode::Assign(
                 "msg".to_string(),
                 Box::new(BFLNode::String("Hello, World!\n".to_string())),
@@ -323,7 +322,18 @@ mod tests {
         println!("\n--- Memory before execution: ---");
         let cells = bf.dump_cells(30);
         for (i, cell) in cells.iter().enumerate() {
-            println!("Cell {}: {} ({})", i, cell, *cell as char);
+            if *cell != 0 {
+                println!(
+                    "Cell {}: {} ({})",
+                    i,
+                    cell,
+                    if *cell >= 32 && *cell <= 126 {
+                        *cell as char
+                    } else {
+                        ' '
+                    }
+                );
+            }
         }
 
         println!("\n--- Program Output: ---");
@@ -332,10 +342,19 @@ mod tests {
         println!("\n--- Memory after execution: ---");
         let cells = bf.dump_cells(30);
         for (i, cell) in cells.iter().enumerate() {
-            println!("Cell {}: {} ({})", i, cell, *cell as char);
+            if *cell != 0 {
+                println!(
+                    "Cell {}: {} ({})",
+                    i,
+                    cell,
+                    if *cell >= 32 && *cell <= 126 {
+                        *cell as char
+                    } else {
+                        ' '
+                    }
+                );
+            }
         }
-
-        println!("\n=== End of Hello World Syscall Test ===\n");
     }
 
     #[test]
