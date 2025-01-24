@@ -103,16 +103,16 @@ impl BFLCompiler {
 
                 match expr.as_ref() {
                     BFLNode::String(s) => {
-                        // Store string data right after the variable
-                        let str_pos = location + 1;
+                        // Store string data starting at next_var_location
+                        let str_start = self.next_var_location;
 
-                        // Store the pointer in the variable first
+                        // Store the pointer in the variable
                         self.move_to(location);
                         self.output.push_str("[-]"); // Clear the variable
-                        self.output.push_str(&"+".repeat(str_pos)); // Store pointer to string data
+                        self.output.push_str(&"+".repeat(str_start)); // Store pointer to string data
 
-                        // Then store the string data
-                        self.move_to(str_pos);
+                        // Store the string data
+                        self.move_to(str_start);
                         for c in s.chars() {
                             self.output.push_str("[-]"); // Clear current cell
                             let ascii_val = c as u8;
@@ -125,7 +125,7 @@ impl BFLCompiler {
                         }
 
                         // Update next_var_location to after the string data
-                        self.next_var_location = str_pos + s.len() + 1;
+                        self.next_var_location = str_start + s.len();
                     }
                     _ => {
                         self.move_to(location);
@@ -194,26 +194,15 @@ impl BFLCompiler {
                             self.move_to(arg_pos);
                             self.output.push_str("[-]");
 
-                            // Move to variable location and get the pointer value
+                            // Copy the variable's value (which is a pointer to the string) to the argument position
                             self.move_to(var_loc);
-
-                            // Copy the pointer value to the argument position
                             self.output.push_str("[->+>+<<]"); // Copy to temp1 and temp2
-                            self.output.push_str(">>[-<<+>>]<<"); // Move temp1 back to source
-
-                            // Now move to the argument position
-                            self.move_to(arg_pos);
-
-                            // Copy the value from temp2 to the argument position
-                            self.move_to(var_loc + 2);
-                            self.output.push_str("[-<+>]"); // Move temp2 to arg position
-
-                            // Move back to argument position and increment to point to actual string data
-                            self.move_to(arg_pos);
-                            self.output.push_str("+"); // Point to actual string data
+                            self.output.push_str(">>[-<<+>>]<<"); // Move temp2 back to source
+                            self.move_to(var_loc + 1);
+                            self.output.push_str("[-<+>]"); // Move temp1 to arg position
 
                             // Clear any temporary cells we used
-                            self.move_to(var_loc + 2);
+                            self.move_to(var_loc + 1);
                             self.output.push_str("[-]");
                         }
                         _ => {
