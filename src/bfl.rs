@@ -43,7 +43,7 @@ impl BFLCompiler {
         } else {
             let location = self.next_var_location;
             self.variables.insert(name.to_string(), location);
-            self.next_var_location += 1;
+            self.next_var_location = location + 1;
             location
         }
     }
@@ -85,11 +85,14 @@ impl BFLCompiler {
                 // Store string data at current position
                 for c in s.chars() {
                     self.output.push_str("[-]"); // Clear current cell
-                    self.output.push_str(&"+".repeat(c as usize)); // Set to ASCII value
+                    let ascii_val = c as u8;
+                    self.output.push_str(&"+".repeat(ascii_val as usize)); // Set to ASCII value
                     self.output.push('>'); // Move to next cell
                 }
-                self.output.push_str("[-]"); // Null terminator
-                self.output.push('>'); // Move past null terminator
+                // Remove the last '>' since we don't want to move past the last character
+                if !s.is_empty() {
+                    self.output.pop();
+                }
             }
             BFLNode::Variable(name) => {
                 let location = self.allocate_variable(name);
@@ -100,18 +103,29 @@ impl BFLCompiler {
 
                 match expr.as_ref() {
                     BFLNode::String(s) => {
-                        // First, store the string data at next available location
-                        let str_pos = self.next_var_location;
-                        self.move_to(str_pos);
-                        self.compile(expr)?;
+                        // Store string data right after the variable
+                        let str_pos = location + 1;
 
-                        // Now store the pointer in the variable
+                        // Store the pointer in the variable first
                         self.move_to(location);
                         self.output.push_str("[-]"); // Clear the variable
                         self.output.push_str(&"+".repeat(str_pos)); // Store pointer to string data
 
+                        // Then store the string data
+                        self.move_to(str_pos);
+                        for c in s.chars() {
+                            self.output.push_str("[-]"); // Clear current cell
+                            let ascii_val = c as u8;
+                            self.output.push_str(&"+".repeat(ascii_val as usize)); // Set to ASCII value
+                            self.output.push('>'); // Move to next cell
+                        }
+                        // Remove the last '>' since we don't want to move past the last character
+                        if !s.is_empty() {
+                            self.output.pop();
+                        }
+
                         // Update next_var_location to after the string data
-                        self.next_var_location = str_pos + s.len() + 2; // +1 for null terminator, +1 for next position
+                        self.next_var_location = str_pos + s.len() + 1;
                     }
                     _ => {
                         self.move_to(location);
@@ -176,14 +190,31 @@ impl BFLCompiler {
                                 .get(name)
                                 .ok_or_else(|| format!("Variable {} not found", name))?;
 
-                            // Move to argument position
+                            // Move to argument position and clear it
                             self.move_to(arg_pos);
-                            self.output.push_str("[-]"); // Clear destination
+                            self.output.push_str("[-]");
 
-                            // Move to variable location and copy its value
+                            // Move to variable location and get the pointer value
                             self.move_to(var_loc);
-                            self.output.push_str("[->+>+<<]"); // Copy to temp and dest
-                            self.output.push_str(">>[-<<+>>]<<"); // Move temp back to source
+
+                            // Copy the pointer value to the argument position
+                            self.output.push_str("[->+>+<<]"); // Copy to temp1 and temp2
+                            self.output.push_str(">>[-<<+>>]<<"); // Move temp1 back to source
+
+                            // Now move to the argument position
+                            self.move_to(arg_pos);
+
+                            // Copy the value from temp2 to the argument position
+                            self.move_to(var_loc + 2);
+                            self.output.push_str("[-<+>]"); // Move temp2 to arg position
+
+                            // Move back to argument position and increment to point to actual string data
+                            self.move_to(arg_pos);
+                            self.output.push_str("+"); // Point to actual string data
+
+                            // Clear any temporary cells we used
+                            self.move_to(var_loc + 2);
+                            self.output.push_str("[-]");
                         }
                         _ => {
                             self.move_to(arg_pos);
@@ -260,6 +291,8 @@ mod tests {
     fn test_hello_world_syscall() {
         let mut compiler = BFLCompiler::new();
 
+        println!("\n=== Starting Hello World Syscall Test ===\n");
+
         let program = BFLNode::Block(vec![
             // Store the string in a variable
             BFLNode::Assign(
@@ -279,22 +312,25 @@ mod tests {
 
         compiler.compile(&program).unwrap();
         let bf_code = compiler.get_output();
-        println!("\nGenerated BF code:\n{}", bf_code);
+        println!("Generated BF code:\n{}", bf_code);
 
         let mut bf = BF::new(bf_code, Mode::BFA);
-        println!("\nMemory before execution:");
+        println!("\n--- Memory before execution: ---");
         let cells = bf.dump_cells(30);
         for (i, cell) in cells.iter().enumerate() {
             println!("Cell {}: {} ({})", i, cell, *cell as char);
         }
 
+        println!("\n--- Program Output: ---");
         bf.run().unwrap();
 
-        println!("\nMemory after execution:");
+        println!("\n--- Memory after execution: ---");
         let cells = bf.dump_cells(30);
         for (i, cell) in cells.iter().enumerate() {
             println!("Cell {}: {} ({})", i, cell, *cell as char);
         }
+
+        println!("\n=== End of Hello World Syscall Test ===\n");
     }
 
     #[test]
@@ -423,6 +459,178 @@ mod tests {
         let cells = bf.dump_cells(20);
         for (i, cell) in cells.iter().enumerate() {
             println!("Cell {}: {} ({})", i, cell, *cell as char);
+        }
+    }
+
+    #[test]
+    fn test_simple_hello() {
+        let mut compiler = BFLCompiler::new();
+        println!("\n=== Starting Simple Hello Test ===\n");
+
+        let program = BFLNode::Block(vec![
+            // Store string "Hi\n" in a variable
+            BFLNode::Assign(
+                "msg".to_string(),
+                Box::new(BFLNode::String("Hi\n".to_string())),
+            ),
+            // Write syscall
+            BFLNode::Syscall(
+                Box::new(BFLNode::Number(1)), // write syscall
+                vec![
+                    BFLNode::Number(1),                   // stdout
+                    BFLNode::Variable("msg".to_string()), // buffer pointer
+                    BFLNode::Number(3),                   // length
+                ],
+            ),
+        ]);
+
+        compiler.compile(&program).unwrap();
+        let bf_code = compiler.get_output();
+        println!("Generated BF code:\n{}", bf_code);
+
+        let mut bf = BF::new(bf_code, Mode::BFA);
+        println!("\n--- Memory before execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            if *cell != 0 {
+                println!("Cell {}: {} ({})", i, cell, *cell as char);
+            }
+        }
+
+        println!("\n--- Program Output: ---");
+        bf.run().unwrap();
+
+        println!("\n--- Memory after execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            if *cell != 0 {
+                println!("Cell {}: {} ({})", i, cell, *cell as char);
+            }
+        }
+        println!("\n=== End of Simple Hello Test ===\n");
+    }
+
+    #[test]
+    fn test_string_storage_basic() {
+        let mut compiler = BFLCompiler::new();
+        println!("\n=== Starting String Storage Basic Test ===\n");
+
+        // Just store a string and verify memory layout
+        let program = BFLNode::Block(vec![BFLNode::Assign(
+            "str".to_string(),
+            Box::new(BFLNode::String("A".to_string())),
+        )]);
+
+        compiler.compile(&program).unwrap();
+        let bf_code = compiler.get_output();
+        println!("Generated BF code:\n{}", bf_code);
+
+        let mut bf = BF::new(bf_code, Mode::BFA);
+
+        // Run the code to set up memory
+        bf.run().unwrap();
+
+        println!("\n--- Memory after string storage: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            if *cell != 0 {
+                println!("Cell {}: {} ({})", i, cell, *cell as char);
+            }
+        }
+        // Cell 8 (variable) should contain 9 (pointer to string)
+        // Cell 9 should contain 65 ('A')
+        assert_eq!(cells[8], 9, "Variable should point to string location");
+        assert_eq!(cells[9], 65, "String content should be 'A'");
+    }
+
+    #[test]
+    fn test_string_write_single_char() {
+        let mut compiler = BFLCompiler::new();
+        println!("\n=== Starting Single Char Write Test ===\n");
+
+        let program = BFLNode::Block(vec![
+            // Store just "A" in a variable
+            BFLNode::Assign("ch".to_string(), Box::new(BFLNode::String("A".to_string()))),
+            // Write syscall
+            BFLNode::Syscall(
+                Box::new(BFLNode::Number(1)), // write syscall
+                vec![
+                    BFLNode::Number(1),                  // stdout
+                    BFLNode::Variable("ch".to_string()), // buffer pointer
+                    BFLNode::Number(1),                  // length
+                ],
+            ),
+        ]);
+
+        compiler.compile(&program).unwrap();
+        let bf_code = compiler.get_output();
+        println!("Generated BF code:\n{}", bf_code);
+
+        let mut bf = BF::new(bf_code, Mode::BFA);
+        println!("\n--- Memory before execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            if *cell != 0 {
+                println!("Cell {}: {} ({})", i, cell, *cell as char);
+            }
+        }
+
+        println!("\n--- Program Output: ---");
+        bf.run().unwrap();
+
+        println!("\n--- Memory after execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            if *cell != 0 {
+                println!("Cell {}: {} ({})", i, cell, *cell as char);
+            }
+        }
+    }
+
+    #[test]
+    fn test_string_write_multiple_chars() {
+        let mut compiler = BFLCompiler::new();
+        println!("\n=== Starting Multiple Chars Write Test ===\n");
+
+        let program = BFLNode::Block(vec![
+            // Store "ABC" in a variable
+            BFLNode::Assign(
+                "str".to_string(),
+                Box::new(BFLNode::String("ABC".to_string())),
+            ),
+            // Write syscall
+            BFLNode::Syscall(
+                Box::new(BFLNode::Number(1)), // write syscall
+                vec![
+                    BFLNode::Number(1),                   // stdout
+                    BFLNode::Variable("str".to_string()), // buffer pointer
+                    BFLNode::Number(3),                   // length
+                ],
+            ),
+        ]);
+
+        compiler.compile(&program).unwrap();
+        let bf_code = compiler.get_output();
+        println!("Generated BF code:\n{}", bf_code);
+
+        let mut bf = BF::new(bf_code, Mode::BFA);
+        println!("\n--- Memory before execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            if *cell != 0 {
+                println!("Cell {}: {} ({})", i, cell, *cell as char);
+            }
+        }
+
+        println!("\n--- Program Output: ---");
+        bf.run().unwrap();
+
+        println!("\n--- Memory after execution: ---");
+        let cells = bf.dump_cells(15);
+        for (i, cell) in cells.iter().enumerate() {
+            if *cell != 0 {
+                println!("Cell {}: {} ({})", i, cell, *cell as char);
+            }
         }
     }
 }

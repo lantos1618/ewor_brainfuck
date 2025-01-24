@@ -215,6 +215,8 @@ impl BF {
                         1 => {
                             // write
                             let buf = &self.cells[args[1]..args[1] + args[2]];
+                            // Print the buffer contents for debugging
+                            println!("Writing buffer: {:?}", buf);
                             syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
                                 .map_err(|e| {
                                     BFError::SyscallFailed(format!("write syscall failed: {}", e))
