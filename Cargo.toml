@@ -2,6 +2,7 @@
 name = "ewor_brainfuck"
 version = "0.1.0"
 edition = "2021"
+default-run = "ewor_brainfuck"
 
 [dependencies]
 syscalls = "0.6.15"

@@ -26,16 +26,13 @@ impl std::fmt::Display for BFError {
 impl std::error::Error for BFError {}
 
 pub struct BF {
-    cells: Vec<u8>,
+    cells: Vec<u32>,
     ptr: usize,
     code: Vec<char>,
     pc: usize,
-    output: Vec<u8>, // For testing
+    output: Vec<u8>, // Keep output as u8 for string operations
     mode: Mode,
 }
-
-const SYSCALL_ARGS: usize = 7; // syscall number + 6 args
-const HEAP_START: usize = SYSCALL_ARGS; // Start heap right after syscall args
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -45,7 +42,7 @@ pub enum Mode {
 
 impl BF {
     pub fn new(code: &str, mode: Mode) -> Self {
-        let cells = vec![0; 65536]; // Increase to 64KB from 30KB
+        let cells = vec![0u32; 65536]; // Increase to 64KB from 30KB
         BF {
             cells,
             ptr: 0,
@@ -56,7 +53,7 @@ impl BF {
         }
     }
 
-    pub fn dump_cells(&self, n: usize) -> &[u8] {
+    pub fn dump_cells(&self, n: usize) -> &[u32] {
         &self.cells[..n.min(self.cells.len())]
     }
 
@@ -114,9 +111,9 @@ impl BF {
                 Ok(())
             }
             '.' => {
-                self.output.push(self.cells[self.ptr]);
+                self.output.push(self.cells[self.ptr] as u8);
                 // Also write to stdout
-                print!("{}", self.cells[self.ptr] as char);
+                print!("{}", self.cells[self.ptr] as u8 as char);
                 std::io::stdout()
                     .flush()
                     .map_err(|e| BFError::SyscallFailed(e.to_string()))?;
@@ -127,7 +124,7 @@ impl BF {
                 std::io::stdin()
                     .read_exact(&mut buf)
                     .map_err(|e| BFError::SyscallFailed(format!("Input failed: {}", e)))?;
-                self.cells[self.ptr] = buf[0];
+                self.cells[self.ptr] = buf[0] as u32;
                 Ok(())
             }
             '[' => {
@@ -176,7 +173,7 @@ impl BF {
         match self.code[self.pc] {
             '.' => {
                 // Execute syscall when '.' is encountered
-                let syscall_num = self.cells[0];
+                let syscall_num = self.cells[7] as u32; // Use cell 7 for syscall number instead of 0
 
                 // Get arguments from cells
                 let args = [
@@ -191,7 +188,8 @@ impl BF {
                 // In test mode, reject socket operations first
                 #[cfg(test)]
                 {
-                    if (2..=6).contains(&syscall_num) {
+                    let syscall_num_u8 = syscall_num as u8;
+                    if (2..=6).contains(&syscall_num_u8) {
                         return Err(BFError::InvalidSyscall(
                             "Permission denied: socket operations not allowed in test mode"
                                 .to_string(),
@@ -204,62 +202,171 @@ impl BF {
                 // Execute syscall
                 unsafe {
                     let result = match syscall_num {
-                        0 => {
-                            // read
-                            let buf = &mut self.cells[args[1]..args[1] + args[2]];
-                            syscalls::syscall!(Sysno::read, args[0], buf.as_mut_ptr(), args[2])
-                                .map_err(|e| {
-                                    BFError::SyscallFailed(format!("read syscall failed: {}", e))
-                                })
-                        }
-                        1 => {
+                        4 => {
                             // write
-                            let buf = &self.cells[args[1]..args[1] + args[2]];
-                            // Print the buffer contents for debugging
-                            println!("Write syscall:");
-                            println!("  fd: {}", args[0]);
-                            println!("  buffer pointer: {}", args[1]);
-                            println!("  length: {}", args[2]);
-                            println!("  buffer contents: {:?}", buf);
-                            println!(
-                                "  buffer as chars: {:?}",
-                                buf.iter().map(|&b| b as char).collect::<Vec<_>>()
-                            );
-                            println!("  cells[0..15]: {:?}", &self.cells[0..15]);
-                            syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
-                                .map_err(|e| {
-                                    BFError::SyscallFailed(format!("write syscall failed: {}", e))
-                                })
+                            let buf = &self.cells[args[1]..args[1] + args[2]]
+                                .iter()
+                                .map(|&x| x as u8)
+                                .collect::<Vec<u8>>();
+                            let result =
+                                syscalls::syscall!(Sysno::write, args[0], buf.as_ptr(), args[2])
+                                    .map_err(|e| {
+                                        BFError::SyscallFailed(format!(
+                                            "write syscall failed: {}",
+                                            e
+                                        ))
+                                    });
+                            if let Ok(n) = result {
+                                self.cells[7] = n as u32; // Store result in cell 7
+                                                          // Flush stdout if writing to stdout (fd 1)
+                                if args[0] == 1 {
+                                    std::io::stdout().flush().map_err(|e| {
+                                        BFError::SyscallFailed(format!(
+                                            "Failed to flush stdout: {}",
+                                            e
+                                        ))
+                                    })?;
+                                }
+                            }
+                            result
                         }
-                        2 => {
+                        97 => {
                             // socket
-                            syscalls::syscall!(Sysno::socket, args[0], args[1], args[2]).map_err(
-                                |e| BFError::SyscallFailed(format!("socket syscall failed: {}", e)),
-                            )
+                            let result =
+                                syscalls::syscall!(Sysno::socket, args[0], args[1], args[2])
+                                    .map_err(|e| {
+                                        BFError::SyscallFailed(format!(
+                                            "socket syscall failed: {}",
+                                            e
+                                        ))
+                                    });
+                            if let Ok(fd) = result {
+                                println!("Socket syscall returned fd: {}", fd);
+                                self.cells[0] = fd as u32; // Store fd in cell 0
+                                self.cells[7] = 0; // Success
+                            }
+                            result
+                        }
+                        104 => {
+                            // bind
+                            let fd = self.cells[0] as usize; // Use fd from cell 0
+                            let buf = &self.cells[args[1]..args[1] + args[2]]
+                                .iter()
+                                .map(|&x| x as u8)
+                                .collect::<Vec<u8>>();
+                            println!("Binding socket fd {} with sockaddr_in:", fd);
+                            println!("  sin_family: {:02x} {:02x}", buf[0], buf[1]);
+                            println!("  sin_port: {:02x} {:02x}", buf[2], buf[3]);
+                            println!(
+                                "  sin_addr: {:02x} {:02x} {:02x} {:02x}",
+                                buf[4], buf[5], buf[6], buf[7]
+                            );
+                            let result = syscalls::syscall!(Sysno::bind, fd, buf.as_ptr(), args[2])
+                                .map_err(|e| {
+                                    BFError::SyscallFailed(format!("bind syscall failed: {}", e))
+                                });
+                            if let Ok(n) = result {
+                                println!("Bind syscall succeeded with result: {}", n);
+                                self.cells[7] = n as u32; // Store result in cell 7
+                            }
+                            result
+                        }
+                        106 => {
+                            // listen
+                            let fd = self.cells[0] as usize; // Use fd from cell 0
+                            println!("Listening on socket fd {}", fd);
+                            let result =
+                                syscalls::syscall!(Sysno::listen, fd, args[1]).map_err(|e| {
+                                    BFError::SyscallFailed(format!("listen syscall failed: {}", e))
+                                });
+                            if let Ok(n) = result {
+                                println!("Listen syscall succeeded with result: {}", n);
+                                self.cells[7] = n as u32; // Store result in cell 7
+                            }
+                            result
+                        }
+                        5 => {
+                            // accept
+                            let fd = self.cells[0] as usize; // Use fd from cell 0
+                            let buf = &self.cells[args[1]..args[1] + args[2]]
+                                .iter()
+                                .map(|&x| x as u8)
+                                .collect::<Vec<u8>>();
+                            println!("Accepting connection on socket fd {}", fd);
+                            let result =
+                                syscalls::syscall!(Sysno::accept, fd, buf.as_ptr(), args[2])
+                                    .map_err(|e| {
+                                        BFError::SyscallFailed(format!(
+                                            "accept syscall failed: {}",
+                                            e
+                                        ))
+                                    });
+                            if let Ok(client_fd) = result {
+                                println!("Accept syscall succeeded with client fd: {}", client_fd);
+                                self.cells[0] = client_fd as u32; // Store client fd in cell 0
+                                self.cells[7] = 0; // Success
+                            }
+                            result
                         }
                         3 => {
-                            // bind
-                            let buf = &self.cells[args[1]..args[1] + args[2]];
-                            syscalls::syscall!(Sysno::bind, args[0], buf.as_ptr(), args[2]).map_err(
-                                |e| BFError::SyscallFailed(format!("bind syscall failed: {}", e)),
-                            )
+                            // read
+                            let fd = args[0]; // Use fd directly from args
+                            let mut buf = vec![0u8; args[2]];
+                            println!("Reading from fd {} into buffer of size {}", fd, args[2]);
+                            let result =
+                                syscalls::syscall!(Sysno::read, fd, buf.as_mut_ptr(), args[2])
+                                    .map_err(|e| {
+                                        BFError::SyscallFailed(format!(
+                                            "read syscall failed: {}",
+                                            e
+                                        ))
+                                    });
+                            if let Ok(n) = result {
+                                println!("Read {} bytes", n);
+                                // Copy read data into cells
+                                for (i, &byte) in buf[..n as usize].iter().enumerate() {
+                                    self.cells[args[1] + i] = byte as u32;
+                                }
+                                self.cells[0] = n as u32; // Store bytes read in cell 0
+                                self.cells[7] = 0; // Success
+                            }
+                            result
                         }
-                        4 => syscalls::syscall!(Sysno::listen, args[0], args[1]).map_err(|e| {
-                            BFError::SyscallFailed(format!("listen syscall failed: {}", e))
-                        }),
-                        5 => syscalls::syscall!(Sysno::accept, args[0], args[1], args[2]).map_err(
-                            |e| BFError::SyscallFailed(format!("accept syscall failed: {}", e)),
-                        ),
-                        6 => syscalls::syscall!(Sysno::connect, args[0], args[1], args[2]).map_err(
-                            |e| BFError::SyscallFailed(format!("connect syscall failed: {}", e)),
-                        ),
-                        7 => syscalls::syscall!(Sysno::close, args[0]).map_err(|e| {
+                        48 => {
+                            // accept
+                            let socket_fd = self.cells[args[0]] as usize; // Use fd from argument
+                            let addr_ptr = args[1];
+                            let addr_len_ptr = args[2];
+
+                            // Create a mutable buffer for the address length
+                            let mut addr_len = self.cells[addr_len_ptr] as usize;
+
+                            let result = syscalls::syscall!(
+                                Sysno::accept,
+                                socket_fd,
+                                &self.cells[addr_ptr] as *const u32 as *mut u8,
+                                &mut addr_len as *mut usize
+                            )
+                            .map_err(|e| {
+                                BFError::SyscallFailed(format!("accept syscall failed: {}", e))
+                            });
+
+                            if let Ok(client_fd) = result {
+                                println!("Accept syscall succeeded with client fd: {}", client_fd);
+                                self.cells[0] = client_fd as u32; // Store client fd in cell 0
+                                self.cells[7] = 0; // Success
+                                self.cells[addr_len_ptr] = addr_len as u32; // Update the address length
+                            }
+                            result
+                        }
+                        6 => syscalls::syscall!(Sysno::close, args[0]).map_err(|e| {
                             BFError::SyscallFailed(format!("close syscall failed: {}", e))
                         }),
                         _ => Err(BFError::InvalidSyscall("Invalid syscall".to_string())),
                     }?;
 
-                    self.cells[0] = result as u8;
+                    // Store result in cell 7, not cell 0
+                    self.cells[7] = result as u32;
                     Ok(())
                 }
             }
@@ -269,17 +376,11 @@ impl BF {
         }
     }
 
-    fn validate_syscall(&self, syscall_num: u8, args: &[usize; 6]) -> Result<(), BFError> {
-        if syscall_num > 7 {
-            return Err(BFError::InvalidSyscall(format!(
-                "Invalid syscall number: {}",
-                syscall_num
-            )));
-        }
-
+    fn validate_syscall(&self, syscall_num: u32, args: &[usize; 6]) -> Result<(), BFError> {
+        // macOS syscall numbers
         match syscall_num {
-            0 | 1 => {
-                // read/write validation
+            3 => {
+                // read validation
                 let _fd = args[0];
                 let buf_addr = args[1];
                 let buf_len = args[2];
@@ -291,10 +392,29 @@ impl BF {
                     return Err(BFError::MemoryAccess("Buffer overflow".to_string()));
                 }
             }
-            7 => {
-                // close validation
+            4 => {
+                // write validation
+                let _fd = args[0];
+                let buf_addr = args[1];
+                let buf_len = args[2];
+
+                if buf_addr >= self.cells.len()
+                    || buf_len == 0
+                    || buf_addr + buf_len > self.cells.len()
+                {
+                    return Err(BFError::MemoryAccess("Buffer overflow".to_string()));
+                }
             }
-            _ => {}
+            48 | 97 | 104 | 106 | 6 => {
+                // accept, socket, bind, listen, close validation
+                // These are valid syscalls on macOS
+            }
+            _ => {
+                return Err(BFError::InvalidSyscall(format!(
+                    "Invalid syscall number: {}",
+                    syscall_num
+                )));
+            }
         }
 
         Ok(())
@@ -304,6 +424,7 @@ impl BF {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bfl::{BFLCompiler, BFLNode};
 
     mod syscall_direct {
         use syscalls::Sysno;
@@ -531,7 +652,7 @@ mod tests {
             let result = bf.run();
             if let Err(e) = &result {
                 eprintln!("Simple write failed: {}", e);
-                eprintln!("Cells: {:?}", &bf.cells[..HEAP_START + 5]);
+                eprintln!("Cells: {:?}", &bf.cells[..12]); // Show first 12 cells which includes syscall area and some heap
             }
             assert!(result.is_ok());
         }
@@ -576,6 +697,115 @@ mod tests {
             let mut bf = BF::new(&code, Mode::BFA);
             let result = bf.run();
             assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_string_comparison() {
+            let mut compiler = BFLCompiler::new();
+
+            // Test program that:
+            // 1. Stores a byte (10 for newline)
+            // 2. Compares it with another value (10)
+            // 3. Sets a result flag
+            let program = BFLNode::Block(vec![
+                // Store test byte (newline - ASCII 10)
+                BFLNode::Assign(
+                    "test_byte".to_string(),
+                    Box::new(BFLNode::Block(vec![
+                        BFLNode::Number(10), // newline character
+                    ])),
+                ),
+                // Store comparison value
+                BFLNode::Assign(
+                    "compare_byte".to_string(),
+                    Box::new(BFLNode::Block(vec![
+                        BFLNode::Number(10), // newline character
+                    ])),
+                ),
+                // Initialize result to 0
+                BFLNode::Assign(
+                    "result".to_string(),
+                    Box::new(BFLNode::Block(vec![BFLNode::Number(0)])),
+                ),
+                // Compare bytes and set result
+                BFLNode::Block(vec![
+                    // Copy test_byte to temp cell
+                    BFLNode::Variable("test_byte".to_string()),
+                    // Subtract compare_byte
+                    BFLNode::Sub(
+                        Box::new(BFLNode::Variable("test_byte".to_string())),
+                        Box::new(BFLNode::Variable("compare_byte".to_string())),
+                    ),
+                    // If difference is 0, set result to 1
+                    BFLNode::If(
+                        Box::new(BFLNode::Number(0)),
+                        vec![BFLNode::Assign(
+                            "result".to_string(),
+                            Box::new(BFLNode::Block(vec![BFLNode::Number(1)])),
+                        )],
+                    ),
+                ]),
+            ]);
+
+            compiler.compile(&program).unwrap();
+            let bf_code = compiler.get_output();
+            let mut bf = BF::new(bf_code, Mode::BF);
+            bf.run().unwrap();
+
+            // Check that result is 1 (comparison succeeded)
+            let result_location = compiler.get_variable_location("result").unwrap();
+            assert_eq!(bf.cells[result_location], 1);
+        }
+
+        #[test]
+        fn test_newline_handling() {
+            let mut compiler = BFLCompiler::new();
+
+            // Test program that:
+            // 1. Stores a string with newline
+            // 2. Checks each character
+            let program = BFLNode::Block(vec![
+                // Store test string "123\n"
+                BFLNode::Assign(
+                    "test_str".to_string(),
+                    Box::new(BFLNode::String("123\n".to_string())),
+                ),
+                // Initialize result to 0
+                BFLNode::Assign(
+                    "result".to_string(),
+                    Box::new(BFLNode::Block(vec![BFLNode::Number(0)])),
+                ),
+                // Check if last character is newline
+                BFLNode::Block(vec![
+                    // Get last character (at index 3)
+                    BFLNode::Add(
+                        Box::new(BFLNode::Variable("test_str".to_string())),
+                        Box::new(BFLNode::Number(3)),
+                    ),
+                    // Compare with newline (10)
+                    BFLNode::Sub(
+                        Box::new(BFLNode::Number(10)),
+                        Box::new(BFLNode::Variable("test_str".to_string())),
+                    ),
+                    // If difference is 0, set result to 1
+                    BFLNode::If(
+                        Box::new(BFLNode::Number(0)),
+                        vec![BFLNode::Assign(
+                            "result".to_string(),
+                            Box::new(BFLNode::Block(vec![BFLNode::Number(1)])),
+                        )],
+                    ),
+                ]),
+            ]);
+
+            compiler.compile(&program).unwrap();
+            let bf_code = compiler.get_output();
+            let mut bf = BF::new(bf_code, Mode::BF);
+            bf.run().unwrap();
+
+            // Check that result is 1 (newline was found)
+            let result_location = compiler.get_variable_location("result").unwrap();
+            assert_eq!(bf.cells[result_location], 1);
         }
     }
 }
