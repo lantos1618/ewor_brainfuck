@@ -8,6 +8,8 @@ default-run = "ewor_brainfuck"
 syscalls = "0.6.15"
 libc = "0.2"
 pretty_assertions = "1.4.0"
+thiserror = "1.0"
+anyhow = "1.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0" # For nicer test output
