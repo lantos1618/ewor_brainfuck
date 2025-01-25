@@ -1,21 +1,26 @@
-use ewor_brainfuck::bfl::BFLNode;
+use ewor_brainfuck::{
+    bfl::{BFLCompiler, BFLNode},
+    bfvm::BFVM,
+    Syscall,
+};
 
-fn main() -> Result<(), String> {
+fn main() -> anyhow::Result<()> {
     let program = BFLNode::Block(vec![
         BFLNode::Assign(
             "message".to_string(),
-            BFLNode::String("Hello, World!".to_string()),
+            Box::new(BFLNode::String("Hello, World!\n".to_string())),
         ),
         BFLNode::Syscall(Syscall::Write {
             fd: 1,
-            buf: BFLNode::Variable("message".to_string()),
+            buf: b"Hello, World!\n".to_vec(),
         }),
     ]);
 
-    let mut bfl = BFL::new();
-    let compiled = bfl.compile(&program)?;
+    let mut compiler = BFLCompiler::new();
+    let compiled = compiler.compile(&program)?;
 
-    let mut vm = BFVM::new();
+    let mut vm = BFVM::new(1024); // 1KB memory
     vm.run(&compiled)?;
+
     Ok(())
 }
