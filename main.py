@@ -71,7 +71,7 @@ class CodeGenerator:
         """Get just the Brainfuck code without debug info"""
         return ''.join(code for code, _ in self.output if code is not None)
 
-    def move(self, target):
+    def move_ptr(self, target):
         """Generate code to move pointer to target cell"""
         if target > self.ptr:
             self.emit('>' * (target - self.ptr), f"Moving from cell {self.ptr} to cell {target}")
@@ -146,7 +146,7 @@ class CodeGenerator:
         var_pos = self.gen_var(node.var)
         
         if isinstance(node.value, Value):
-            self.move(var_pos)
+            self.move_ptr(var_pos)
             self.gen_value(node.value)
         elif isinstance(node.value, String):
             # Store string character by character
@@ -154,17 +154,17 @@ class CodeGenerator:
             if string_pos != var_pos:
                 # If string was stored at a different position than the variable,
                 # we need to update the variable to point to the string
-                self.move(var_pos)
+                self.move_ptr(var_pos)
                 self.set_cell(string_pos)
         elif isinstance(node.value, Syscall):
             # Generate syscall code
             self.gen_syscall(node.value)
             # Copy result from cell 8 to variable's cell
-            self.move(8)  # Move to result cell
+            self.move_ptr(8)  # Move to result cell
             self.emit('[-', f"Start copying result from cell 8 to cell {var_pos}")
-            self.move(var_pos)
+            self.move_ptr(var_pos)
             self.emit('+', f"Copy value to cell {var_pos}")
-            self.move(8)
+            self.move_ptr(8)
             self.emit(']', f"End copying result")
             
         if self.debug:
@@ -177,7 +177,7 @@ class CodeGenerator:
             self.indent_level += 1
         
         # Set syscall number in cell 1
-        self.move(1)
+        self.move_ptr(1)
         self.set_cell(node.num)
         
         # Set arguments in cells 2-7
@@ -185,27 +185,27 @@ class CodeGenerator:
             if self.debug:
                 self.emit('', f"Setting syscall arg {i}")
                 self.indent_level += 1
-            self.move(2 + i)
+            self.move_ptr(2 + i)
             if isinstance(arg, Value):
                 self.gen_value(arg)
             elif isinstance(arg, Var):
                 # Copy from variable cell to argument cell
                 var_pos = self.gen_var(arg)
                 # First clear the target cell
-                self.move(2 + i)
+                self.move_ptr(2 + i)
                 self.set_cell(0)
                 # Move to source and start copy loop
-                self.move(var_pos)
+                self.move_ptr(var_pos)
                 self.emit('[-', f"Start copying from cell {var_pos} to cell {2 + i}")
-                self.move(2 + i)
+                self.move_ptr(2 + i)
                 self.emit('+', f"Copy to argument cell")
-                self.move(var_pos)
+                self.move_ptr(var_pos)
                 self.emit(']', f"End copying")
             if self.debug:
                 self.indent_level -= 1
         
         # Trigger syscall with cell 0
-        self.move(0)
+        self.move_ptr(0)
         self.set_cell(255)
         self.emit('.', "Trigger syscall")
         
@@ -228,7 +228,7 @@ class CodeGenerator:
             
         # Store each character
         for i, char in enumerate(node.value):
-            self.move(start_pos + i)
+            self.move_ptr(start_pos + i)
             self.set_cell(ord(char))
             if self.debug:
                 self.emit('', f"Stored '{char}' (ASCII {ord(char)}) in cell {start_pos + i}")
