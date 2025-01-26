@@ -51,7 +51,7 @@ class String(Node):
 
 class CodeGenerator:
     def __init__(self, debug=False):
-        self.code = []
+        self.output = []  # List of (code, debug_comment) tuples
         self.vars = {}  # Map variable names to cell positions
         self.next_var = 10  # Start variables at cell 10
         self.ptr = 0  # Current pointer position
@@ -62,12 +62,13 @@ class CodeGenerator:
     def emit(self, code, comment=None):
         """Emit code with optional debug comment"""
         indent = "    " * self.indent_level
-        if self.debug and comment:
-            self.code.append(f"\n{indent}// {comment}\n")
-        if self.debug:
-            self.code.append(f"{indent}{code}")
-        else:
-            self.code.append(code)
+        debug_info = f"{indent}// {comment}" if self.debug and comment else None
+        code_str = f"{indent}{code}" if self.debug and code else code
+        self.output.append((code_str if code else None, debug_info))
+
+    def get_code(self):
+        """Get just the Brainfuck code without debug info"""
+        return ''.join(code for code, _ in self.output if code is not None)
 
     def move(self, target):
         """Generate code to move pointer to target cell"""
@@ -423,10 +424,19 @@ if __name__ == "__main__":
     gen = CodeGenerator(debug=True)
     for node in program:
         gen.generate(node)
-    print('Generated Brainfuck code:')
-    bf_code = ''.join(gen.code)
-    print(bf_code)
+    
+    if gen.debug:
+        print('Generated Brainfuck code with debug info:')
+        for code, debug in gen.output:
+            if debug:
+                print(debug)
+            if code:
+                print(code)
+    else:
+        print('Generated Brainfuck code:')
+        print(gen.get_code())
     
     print('\nRunning code in VM:')
-    vm = BrainfuckVM(bf_code, debug=True)
+    # Run the actual Brainfuck code without debug comments
+    vm = BrainfuckVM(gen.get_code(), debug=True)
     vm.run()
