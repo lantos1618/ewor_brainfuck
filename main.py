@@ -159,13 +159,8 @@ class CodeGenerator:
         elif isinstance(node.value, Syscall):
             # Generate syscall code
             self.gen_syscall(node.value)
-            # Copy result from cell 8 to variable's cell
-            self.move_ptr(8)  # Move to result cell
-            self.emit('[-', f"Start copying result from cell 8 to cell {var_pos}")
-            self.move_ptr(var_pos)
-            self.emit('+', f"Copy value to cell {var_pos}")
-            self.move_ptr(8)
-            self.emit(']', f"End copying result")
+            # Move result from cell 8 to variable's cell
+            self.move_cell(8, var_pos)
             
         if self.debug:
             self.indent_level -= 1
@@ -189,18 +184,9 @@ class CodeGenerator:
             if isinstance(arg, Value):
                 self.gen_value(arg)
             elif isinstance(arg, Var):
-                # Copy from variable cell to argument cell
+                # Copy from variable cell to argument cell, preserving the variable
                 var_pos = self.gen_var(arg)
-                # First clear the target cell
-                self.move_ptr(2 + i)
-                self.set_cell(0)
-                # Move to source and start copy loop
-                self.move_ptr(var_pos)
-                self.emit('[-', f"Start copying from cell {var_pos} to cell {2 + i}")
-                self.move_ptr(2 + i)
-                self.emit('+', f"Copy to argument cell")
-                self.move_ptr(var_pos)
-                self.emit(']', f"End copying")
+                self.copy_cell(var_pos, 2 + i, temp=9)  # Use cell 9 as temp
             if self.debug:
                 self.indent_level -= 1
         
@@ -237,6 +223,57 @@ class CodeGenerator:
             self.indent_level -= 1
             
         return start_pos  # Return starting position of string
+
+    def copy_cell(self, source, dest, temp=None):
+        """Copy value from source cell to dest cell, optionally using temp cell.
+        If temp is not provided, source will be zeroed."""
+        if self.debug:
+            self.emit('', f"Copying from cell {source} to cell {dest}")
+            self.indent_level += 1
+
+        if temp is not None:
+            # First clear temp and dest
+            self.move_ptr(temp)
+            self.set_cell(0)
+            self.move_ptr(dest)
+            self.set_cell(0)
+            
+            # Copy source to both temp and dest
+            self.move_ptr(source)
+            self.emit('[-', f"Start copying from cell {source}")
+            self.move_ptr(dest)
+            self.emit('+', f"Copy to dest cell {dest}")
+            self.move_ptr(temp)
+            self.emit('+', f"Copy to temp cell {temp}")
+            self.move_ptr(source)
+            self.emit(']', f"End first copy phase")
+            
+            # Copy back from temp to source
+            self.move_ptr(temp)
+            self.emit('[-', f"Start restoring source from temp")
+            self.move_ptr(source)
+            self.emit('+', f"Restore to source cell {source}")
+            self.move_ptr(temp)
+            self.emit(']', f"End restore phase")
+        else:
+            # Direct copy that consumes source
+            self.move_ptr(dest)
+            self.set_cell(0)
+            self.move_ptr(source)
+            self.emit('[-', f"Start moving from cell {source}")
+            self.move_ptr(dest)
+            self.emit('+', f"Copy to cell {dest}")
+            self.move_ptr(source)
+            self.emit(']', f"End moving")
+
+        if self.debug:
+            self.indent_level -= 1
+
+    def move_cell(self, source, dest):
+        """Move value from source cell to dest cell (source will be zeroed)"""
+        if self.debug:
+            self.emit('', f"Moving from cell {source} to cell {dest}")
+        self.copy_cell(source, dest)  # Since we're not providing temp, this will zero source
 
 class BrainfuckVM:
     def __init__(self, code, memory_size=30000, debug=False, debug_cells=16):
