@@ -145,6 +145,7 @@ pub struct BfCodeGenerator {
     pub current_ptr: usize, // Where the BF tape pointer is
 
     // Keep track of the next free cell for "heap" usage
+    // Start after syscall memory zone (0-7)
     pub next_free_cell: usize,
 }
 
@@ -157,7 +158,7 @@ impl BfCodeGenerator {
             memory: vec![],
             cells: HashMap::new(),
             current_ptr: 0,
-            next_free_cell: 0,
+            next_free_cell: 8, // Start allocations after syscall memory zone
         }
     }
 
@@ -696,7 +697,11 @@ pub struct BrainfuckVM {
     pub memory: Vec<u8>,
     pub ptr: usize,
     pub debug: bool,
-    // The user can define a "heap_start" or other layout if desired:
+    // Memory layout:
+    // [0]: syscall marker (255 indicates syscall)
+    // [1]: syscall number
+    // [2-7]: syscall arguments (up to 6)
+    // [8+]: heap space for program use
     pub heap_start: usize,
 }
 
@@ -706,7 +711,7 @@ impl BrainfuckVM {
             memory: vec![0; memory_size],
             ptr: 0,
             debug,
-            heap_start: 8, // for example, so we don't stomp on [0..7]
+            heap_start: 8, // First 8 cells (0-7) reserved for syscall
         }
     }
 
@@ -820,10 +825,11 @@ fn main() -> Result<()> {
             // Syscall number 1 (on many systems = write)
             Box::new(BfNode::Byte(1)),
             vec![
+                BfNode::Byte(1),
                 // Arg0 => pointer to 'message'
-                BfNode::Var("message".to_string()),
+                BfNode::Ptr("message".to_string(), 0),
                 // Arg1 => length of 'message'
-                BfNode::Byte(message.len() as u8),
+                BfNode::Byte(14),
             ],
         ),
     ]);
@@ -837,6 +843,8 @@ fn main() -> Result<()> {
 
     let mut vm = BrainfuckVM::new(true, 1024 * 1024);
     vm.run(&gen.get_formatted_output())?;
+
+    println!("{:?}", vm.memory[0..32].to_vec());
 
     Ok(())
 }
