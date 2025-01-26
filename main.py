@@ -43,6 +43,11 @@ class String(Node):
         self.value = value
         self.length = len(value)
 
+class Block(Node):
+    def __init__(self, statements):
+        super().__init__()
+        self.statements = statements
+
 class CodeGenerator:
     def __init__(self, debug=False):
         self.output = []
@@ -92,6 +97,8 @@ class CodeGenerator:
             return self.gen_syscall(node)
         elif isinstance(node, String):
             return self.gen_string(node)
+        elif isinstance(node, Block):
+            return self.gen_block(node)
         # Add other node types as needed
 
     def gen_value(self, node):
@@ -269,6 +276,19 @@ class CodeGenerator:
             self.emit('', f"Moving from cell {source} to cell {dest}")
         self.copy_cell(source, dest)  # Since we're not providing temp, this will zero source
 
+    def gen_block(self, node):
+        """Generate code for a block of statements"""
+        if self.debug:
+            self.emit('', "Block start")
+            self.indent_level += 1
+            
+        for statement in node.statements:
+            self.generate(statement)
+            
+        if self.debug:
+            self.indent_level -= 1
+            self.emit('', "Block end")
+
 class BrainfuckVM:
     def __init__(self, code, memory_size=30000, debug=False, debug_cells=16):
         self.code = code
@@ -445,7 +465,7 @@ class BrainfuckVM:
 # Update the example to use debug mode
 if __name__ == "__main__":
     # Test memory allocation with multiple strings
-    program = [
+    program = Block([
         # Store first string
         Assign(Var('message'), String("hi")),
         # Store second string
@@ -458,11 +478,10 @@ if __name__ == "__main__":
         Assign(Var('result2'), 
             Syscall(1, [Value(1), Var('message2'), Value(15)])
         )
-    ]
+    ])
 
-    gen = CodeGenerator(debug=True)
-    for node in program:
-        gen.generate(node)
+    gen = CodeGenerator(debug=True) 
+    gen.generate(program)
     
     if gen.debug:
         print('Generated Brainfuck code with debug info:')
