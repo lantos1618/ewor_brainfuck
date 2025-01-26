@@ -51,13 +51,14 @@ class String(Node):
 
 class CodeGenerator:
     def __init__(self, debug=False):
-        self.output = []  # List of (code, debug_comment) tuples
-        self.vars = {}  # Map variable names to cell positions
-        self.next_var = 10  # Start variables at cell 10
-        self.ptr = 0  # Current pointer position
+        self.output = []
+        self.vars = {}  # Maps variable names to their allocated cell
+        self.next_var = 10
+        self.ptr = 0
         self.debug = debug
         self.indent_level = 0
-        self.allocations = {}  # Track memory allocations: {var_name: (start_pos, length)}
+        self.allocations = []  # Tracks all allocated blocks as (start, size)
+
         
     def emit(self, code, comment=None):
         """Emit code with optional debug comment"""
@@ -105,18 +106,25 @@ class CodeGenerator:
         return self.ptr
 
     def allocate_memory(self, length, var_name=None):
-        """Allocate contiguous memory cells"""
-        # Find a free block of memory
+        """Allocate contiguous memory cells, ensuring no overlap with existing allocations."""
         pos = self.next_var
-        while any(start <= pos < start + size 
-                 for (start, size) in self.allocations.values()):
+        while True:
+            overlap = False
+            for (start, size) in self.allocations:
+                # Check if current pos overlaps with any existing block
+                if (start <= pos < start + size) or (pos <= start < pos + length):
+                    overlap = True
+                    break
+            if not overlap:
+                break
             pos += 1
-            
+
+        self.allocations.append((pos, length))
         if var_name:
-            self.allocations[var_name] = (pos, length)
+            self.vars[var_name] = pos  # Variables are single-cell
             if self.debug:
-                self.emit('', f"Allocated {length} cells for {var_name} at position {pos}")
-                
+                self.emit('', f"Allocated variable {var_name} at cell {pos}")
+
         self.next_var = max(self.next_var, pos + length)
         return pos
 
