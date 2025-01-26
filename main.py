@@ -41,6 +41,13 @@ class Syscall(Node):
         super().__init__()
         self.num = num
         self.args = args
+        self.result_cell = 8  # Syscall results are stored in cell 8
+
+class String(Node):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+        self.length = len(value)
 
 class CodeGenerator:
     def __init__(self, debug=False):
@@ -86,6 +93,8 @@ class CodeGenerator:
             return self.gen_add(node)
         elif isinstance(node, Syscall):
             return self.gen_syscall(node)
+        elif isinstance(node, String):
+            return self.gen_string(node)
         # Add other node types as needed
 
     def gen_value(self, node):
@@ -107,10 +116,23 @@ class CodeGenerator:
         if self.debug:
             self.emit('', f"Assignment: {node.var.name}")
             self.indent_level += 1
+            
         var_pos = self.gen_var(node.var)
+        
         if isinstance(node.value, Value):
             self.move(var_pos)
             self.gen_value(node.value)
+        elif isinstance(node.value, Syscall):
+            # Generate syscall code
+            self.gen_syscall(node.value)
+            # Copy result from cell 8 to variable's cell
+            self.move(8)  # Move to result cell
+            self.emit('[-', f"Start copying result from cell 8 to cell {var_pos}")
+            self.move(var_pos)
+            self.emit('+', f"Copy value to cell {var_pos}")
+            self.move(8)
+            self.emit(']', f"End copying result")
+            
         if self.debug:
             self.indent_level -= 1
 
@@ -152,6 +174,25 @@ class CodeGenerator:
         """Generate code for addition"""
         # TODO: Implement addition
         pass
+
+    def gen_string(self, node):
+        """Generate code for string storage"""
+        start_pos = self.next_var
+        self.next_var += node.length  # Reserve cells for each character
+        
+        if self.debug:
+            self.emit('', f"Storing string '{node.value}' starting at cell {start_pos}")
+            self.indent_level += 1
+            
+        # Store each character
+        for i, char in enumerate(node.value):
+            self.move(start_pos + i)
+            self.set_cell(ord(char))
+            
+        if self.debug:
+            self.indent_level -= 1
+            
+        return start_pos  # Return starting position of string
 
 class BrainfuckVM:
     def __init__(self, code, memory_size=30000):
@@ -230,18 +271,23 @@ class BrainfuckVM:
 
 # Update the example to use debug mode
 if __name__ == "__main__":
-    # Example: Create a socket
+    # Write "Hello, World\n" to stdout (fd 1)
     program = [
-        # socket(AF_INET, SOCK_STREAM, 0)
-        Syscall(41, [Value(2), Value(1), Value(0)]),
-        # Store result in 'fd' variable
-        Assign(Var('fd'), Value(0))  # Will be set by syscall result
+        # Store the string
+        Assign(Var('message'), String("Hello, World\n")),
+        # write(1, message, 13)
+        Assign(Var('result'), 
+            Syscall(1, [  # syscall 1 is write
+                Value(1),  # fd 1 is stdout
+                Var('message'),  # pointer to string
+                Value(13)  # length of string
+            ])
+        )
     ]
 
-    gen = CodeGenerator(debug=True)  # Enable debug mode
+    gen = CodeGenerator(debug=True)
     for node in program:
         gen.generate(node)
-
     print('Generated Brainfuck code:')
     bf_code = ''.join(gen.code)
     print(bf_code)
