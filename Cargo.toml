@@ -1,0 +1,9 @@
+[package]
+name = "ewor_brainfuck"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.95"
+syscalls = "0.6.18"
+thiserror = "2.0.11"
