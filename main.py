@@ -30,12 +30,6 @@ class Sub(Node):
         self.left = left
         self.right = right
 
-class Loop(Node):
-    def __init__(self, condition, body):
-        super().__init__()
-        self.condition = condition
-        self.body = body
-
 class Syscall(Node):
     def __init__(self, num, args):
         super().__init__()
