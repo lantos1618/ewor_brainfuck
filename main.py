@@ -475,7 +475,7 @@ if __name__ == "__main__":
         print('Generated Brainfuck code:')
         print(gen.get_code())
     
-    print('\nRunning code in VM:')
+    print('\nRunning code in BFVM:')
     # Run the actual Brainfuck code without debug comments
     vm = BrainfuckVM(gen.get_code(), debug=True)
     vm.run()
