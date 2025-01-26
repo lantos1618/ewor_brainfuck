@@ -30,6 +30,49 @@ class Sub(Node):
         self.left = left
         self.right = right
 
+class Eq(Node):
+    def __init__(self, left, right):
+        super().__init__()
+        self.left = left
+        self.right = right
+
+class Lt(Node):
+    def __init__(self, left, right):
+        super().__init__()
+        self.left = left
+        self.right = right
+
+class Lte(Node):
+    def __init__(self, left, right):
+        super().__init__()
+        self.left = left
+        self.right = right
+
+class Gt(Node):
+    def __init__(self, left, right):
+        super().__init__()
+        self.left = left
+        self.right = right
+
+class Gte(Node):
+    def __init__(self, left, right):
+        super().__init__()
+        self.left = left
+        self.right = right
+
+class If(Node):
+    def __init__(self, condition, then_branch, else_branch=None):
+        super().__init__()
+        self.condition = condition
+        self.then_branch = then_branch
+        self.else_branch = else_branch
+
+class Loop(Node):
+    def __init__(self, condition, body):
+        super().__init__()
+        self.condition = condition
+        self.body = body
+
 class Syscall(Node):
     def __init__(self, num, args):
         super().__init__()
@@ -88,10 +131,26 @@ class CodeGenerator:
             return self.gen_assign(node)
         elif isinstance(node, Add):
             return self.gen_add(node)
+        elif isinstance(node, Sub):
+            return self.gen_sub(node)
         elif isinstance(node, Syscall):
             return self.gen_syscall(node)
         elif isinstance(node, String):
             return self.gen_string(node)
+        elif isinstance(node, Eq):
+            return self.gen_eq(node)
+        elif isinstance(node, Lt):
+            return self.gen_lt(node)
+        elif isinstance(node, Lte):
+            return self.gen_lte(node)
+        elif isinstance(node, Gt):
+            return self.gen_gt(node)
+        elif isinstance(node, Gte):
+            return self.gen_gte(node)
+        elif isinstance(node, If):
+            return self.gen_if(node)
+        elif isinstance(node, Loop):
+            return self.gen_loop(node)
         # Add other node types as needed
 
     def gen_value(self, node):
@@ -194,8 +253,97 @@ class CodeGenerator:
 
     def gen_add(self, node):
         """Generate code for addition"""
-        # TODO: Implement addition
-        pass
+        if self.debug:
+            self.emit('', f"Addition operation")
+            self.indent_level += 1
+            
+        # Generate code for left operand
+        left_pos = None
+        if isinstance(node.left, Value):
+            temp_pos = self.allocate_memory(1)
+            self.move_ptr(temp_pos)
+            self.gen_value(node.left)
+            left_pos = temp_pos
+        elif isinstance(node.left, Var):
+            left_pos = self.gen_var(node.left)
+        
+        # Generate code for right operand
+        right_pos = None
+        if isinstance(node.right, Value):
+            temp_pos = self.allocate_memory(1)
+            self.move_ptr(temp_pos)
+            self.gen_value(node.right)
+            right_pos = temp_pos
+        elif isinstance(node.right, Var):
+            right_pos = self.gen_var(node.right)
+        
+        # Allocate result cell
+        result_pos = self.allocate_memory(1)
+        temp_pos = self.allocate_memory(1)  # For preserving right operand
+        
+        # Copy left operand to result
+        self.copy_cell(left_pos, result_pos)
+        
+        # Add right operand to result
+        self.copy_cell(right_pos, temp_pos)  # Preserve right operand
+        self.move_ptr(temp_pos)
+        self.emit('[-', f"Add loop start")
+        self.move_ptr(result_pos)
+        self.emit('+', f"Increment result")
+        self.move_ptr(temp_pos)
+        self.emit(']', f"Add loop end")
+        
+        if self.debug:
+            self.indent_level -= 1
+        
+        return result_pos
+
+    def gen_sub(self, node):
+        """Generate code for subtraction"""
+        if self.debug:
+            self.emit('', f"Subtraction operation")
+            self.indent_level += 1
+            
+        # Generate code for left operand
+        left_pos = None
+        if isinstance(node.left, Value):
+            temp_pos = self.allocate_memory(1)
+            self.move_ptr(temp_pos)
+            self.gen_value(node.left)
+            left_pos = temp_pos
+        elif isinstance(node.left, Var):
+            left_pos = self.gen_var(node.left)
+        
+        # Generate code for right operand
+        right_pos = None
+        if isinstance(node.right, Value):
+            temp_pos = self.allocate_memory(1)
+            self.move_ptr(temp_pos)
+            self.gen_value(node.right)
+            right_pos = temp_pos
+        elif isinstance(node.right, Var):
+            right_pos = self.gen_var(node.right)
+        
+        # Allocate result cell
+        result_pos = self.allocate_memory(1)
+        temp_pos = self.allocate_memory(1)  # For preserving right operand
+        
+        # Copy left operand to result
+        self.copy_cell(left_pos, result_pos)
+        
+        # Subtract right operand from result
+        self.copy_cell(right_pos, temp_pos)  # Preserve right operand
+        self.move_ptr(temp_pos)
+        self.emit('[-', f"Subtract loop start")
+        self.move_ptr(result_pos)
+        self.emit('-', f"Decrement result")
+        self.move_ptr(temp_pos)
+        self.emit(']', f"Subtract loop end")
+        
+        if self.debug:
+            self.indent_level -= 1
+        
+        return result_pos
 
     def gen_string(self, node):
         """Generate code for string storage"""
@@ -268,6 +416,262 @@ class CodeGenerator:
         if self.debug:
             self.emit('', f"Moving from cell {source} to cell {dest}")
         self.copy_cell(source, dest)  # Since we're not providing temp, this will zero source
+
+    def gen_eq(self, node):
+        """Generate code for equality comparison"""
+        if self.debug:
+            self.emit('', f"Equality comparison")
+            self.indent_level += 1
+            
+        # Generate code for operands
+        left_pos = self.generate(node.left)
+        right_pos = self.generate(node.right)
+        
+        # Allocate cells for result and temporary values
+        result_pos = self.allocate_memory(1)
+        temp1_pos = self.allocate_memory(1)
+        temp2_pos = self.allocate_memory(1)
+        
+        # Copy operands to temp cells
+        self.copy_cell(left_pos, temp1_pos)
+        self.copy_cell(right_pos, temp2_pos)
+        
+        # Set result to 1 initially
+        self.move_ptr(result_pos)
+        self.set_cell(1)
+        
+        # Subtract operands and check if both reach zero simultaneously
+        self.move_ptr(temp1_pos)
+        self.emit('[-', "Start comparison loop")
+        self.move_ptr(temp2_pos)
+        self.emit('-', "Decrement second operand")
+        self.move_ptr(result_pos)
+        self.emit('-', "Clear result if mismatch")
+        self.move_ptr(temp1_pos)
+        self.emit(']', "End comparison loop")
+        
+        # Check if second operand has remaining value
+        self.move_ptr(temp2_pos)
+        self.emit('[', "Check remaining value")
+        self.move_ptr(result_pos)
+        self.emit('[-]', "Clear result if second operand has remaining value")
+        self.move_ptr(temp2_pos)
+        self.emit('[-]', "Clear remaining value")
+        self.emit(']', "End check")
+        
+        if self.debug:
+            self.indent_level -= 1
+            
+        return result_pos
+
+    def gen_lt(self, node):
+        """Generate code for less than comparison"""
+        if self.debug:
+            self.emit('', f"Less than comparison")
+            self.indent_level += 1
+            
+        # Generate code for operands
+        left_pos = self.generate(node.left)
+        right_pos = self.generate(node.right)
+        
+        # Allocate cells for result and temporary values
+        result_pos = self.allocate_memory(1)
+        temp1_pos = self.allocate_memory(1)
+        temp2_pos = self.allocate_memory(1)
+        
+        # Copy operands to temp cells
+        self.copy_cell(left_pos, temp1_pos)
+        self.copy_cell(right_pos, temp2_pos)
+        
+        # Initialize result to 0
+        self.move_ptr(result_pos)
+        self.set_cell(0)
+        
+        # Subtract both numbers simultaneously until one reaches zero
+        self.move_ptr(temp1_pos)
+        self.emit('[', "Start comparison loop")
+        self.emit('-', "Decrement first operand")
+        self.move_ptr(temp2_pos)
+        self.emit('-', "Decrement second operand")
+        self.emit('[', "If second operand still has value")
+        self.move_ptr(result_pos)
+        self.emit('+', "Set result to 1")
+        self.move_ptr(temp2_pos)
+        self.emit('[-]', "Clear second operand")
+        self.emit(']', "End second check")
+        self.move_ptr(temp1_pos)
+        self.emit(']', "End comparison loop")
+        
+        if self.debug:
+            self.indent_level -= 1
+            
+        return result_pos
+
+    def gen_lte(self, node):
+        """Generate code for less than or equal comparison"""
+        if self.debug:
+            self.emit('', f"Less than or equal comparison")
+            self.indent_level += 1
+            
+        # We can implement this as (a <= b) ≡ !(b < a)
+        gt_node = Lt(node.right, node.left)  # Swap operands for greater than
+        gt_pos = self.gen_lt(gt_node)
+        
+        # Allocate result cell
+        result_pos = self.allocate_memory(1)
+        
+        # Invert the result (1 - gt_result)
+        self.move_ptr(result_pos)
+        self.set_cell(1)
+        self.move_ptr(gt_pos)
+        self.emit('[-', "Start inversion")
+        self.move_ptr(result_pos)
+        self.emit('-', "Subtract from 1")
+        self.move_ptr(gt_pos)
+        self.emit(']', "End inversion")
+        
+        if self.debug:
+            self.indent_level -= 1
+            
+        return result_pos
+
+    def gen_gt(self, node):
+        """Generate code for greater than comparison"""
+        if self.debug:
+            self.emit('', f"Greater than comparison")
+            self.indent_level += 1
+            
+        # We can implement this as (a > b) ≡ (b < a)
+        lt_node = Lt(node.right, node.left)  # Swap operands
+        result_pos = self.gen_lt(lt_node)
+        
+        if self.debug:
+            self.indent_level -= 1
+            
+        return result_pos
+
+    def gen_gte(self, node):
+        """Generate code for greater than or equal comparison"""
+        if self.debug:
+            self.emit('', f"Greater than or equal comparison")
+            self.indent_level += 1
+            
+        # We can implement this as (a >= b) ≡ !(a < b)
+        lt_pos = self.gen_lt(node)
+        
+        # Allocate result cell
+        result_pos = self.allocate_memory(1)
+        
+        # Invert the result (1 - lt_result)
+        self.move_ptr(result_pos)
+        self.set_cell(1)
+        self.move_ptr(lt_pos)
+        self.emit('[-', "Start inversion")
+        self.move_ptr(result_pos)
+        self.emit('-', "Subtract from 1")
+        self.move_ptr(lt_pos)
+        self.emit(']', "End inversion")
+        
+        if self.debug:
+            self.indent_level -= 1
+            
+        return result_pos
+
+    def gen_if(self, node):
+        """Generate code for if statement"""
+        if self.debug:
+            self.emit('', f"If statement")
+            self.indent_level += 1
+            
+        # Generate code for condition
+        cond_pos = self.generate(node.condition)
+        
+        # Allocate cells for then and else results
+        result_pos = self.allocate_memory(1)
+        temp_pos = self.allocate_memory(1)  # For preserving condition
+        
+        # Copy condition to temp (preserving it)
+        self.copy_cell(cond_pos, temp_pos)
+        
+        # Start if block
+        self.move_ptr(temp_pos)
+        self.emit('[', "Start if block")
+        
+        # Generate and store then branch result
+        then_result = self.generate(node.then_branch)
+        if then_result is not None:
+            self.copy_cell(then_result, result_pos)
+            
+        # Clear the condition to prevent else execution
+        self.move_ptr(temp_pos)
+        self.emit('[-]', "Clear condition")
+        self.emit(']', "End if block")
+        
+        # Handle else branch if it exists
+        if node.else_branch is not None:
+            # Copy original condition to check if it was false
+            self.copy_cell(cond_pos, temp_pos)
+            
+            # Invert condition for else (if cond was 0, make it 1)
+            self.move_ptr(temp_pos)
+            self.emit('[[-]', "If condition was true")
+            self.emit(']', "End true check")
+            self.emit('+', "Set to 1 if was false")
+            
+            # Start else block
+            self.emit('[', "Start else block")
+            
+            # Generate and store else branch result
+            else_result = self.generate(node.else_branch)
+            if else_result is not None:
+                self.copy_cell(else_result, result_pos)
+                
+            # Clear the inverted condition
+            self.move_ptr(temp_pos)
+            self.emit('[-]', "Clear inverted condition")
+            self.emit(']', "End else block")
+        
+        if self.debug:
+            self.indent_level -= 1
+            
+        return result_pos
+
+    def gen_loop(self, node):
+        """Generate code for loop"""
+        if self.debug:
+            self.emit('', f"Loop")
+            self.indent_level += 1
+            
+        # Allocate cells for condition and body results
+        result_pos = self.allocate_memory(1)
+        cond_pos = self.allocate_memory(1)
+        temp_pos = self.allocate_memory(1)  # For preserving condition
+        
+        # Generate initial condition
+        initial_cond = self.generate(node.condition)
+        self.copy_cell(initial_cond, cond_pos)
+        
+        # Start loop
+        self.move_ptr(cond_pos)
+        self.emit('[', "Start loop")
+        
+        # Generate and execute body
+        body_result = self.generate(node.body)
+        if body_result is not None:
+            self.copy_cell(body_result, result_pos)
+        
+        # Generate next condition
+        next_cond = self.generate(node.condition)
+        self.copy_cell(next_cond, cond_pos)
+        
+        # End loop
+        self.move_ptr(cond_pos)
+        self.emit(']', "End loop")
+        
+        if self.debug:
+            self.indent_level -= 1
+            
+        return result_pos
 
 class BrainfuckVM:
     def __init__(self, code, memory_size=30000, debug=False, debug_cells=16):
@@ -390,12 +794,12 @@ class BrainfuckVM:
                 
                 result = libc.write(fd, buf, count)
                 if self.debug:
-                    print(f"Result: {result}")
+                    print(f"Syscall Result: {result}")
             else:
                 # For other syscalls, pass args directly
                 result = libc.syscall(syscall_num, *args)
                 if self.debug:
-                    print(f"Result: {result}")
+                    print(f"Syscall Result: {result}")
                 
             self.memory[8] = result & 0xFF  # Store result in cell 8
         except Exception as e:
@@ -444,20 +848,37 @@ class BrainfuckVM:
 
 # Update the example to use debug mode
 if __name__ == "__main__":
-    # Test memory allocation with multiple strings
+    # Test control flow operations
     program = [
-        # Store first string
-        Assign(Var('message'), String("hi")),
-        # Store second string
-        Assign(Var('message2'), String("\nhello world!\n")),
-        # write first string
-        Assign(Var('result'), 
-            Syscall(1, [Value(1), Var('message'), Value(2)])
+        # Initialize variables
+        Assign(Var('x'), Value(5)),
+        Assign(Var('y'), Value(3)),
+        
+        # Test if-else with comparison
+        If(
+            Lt(Var('y'), Var('x')),
+            Assign(Var('message1'), String("First: x is greater than y\n")),
+            Assign(Var('message1'), String("First: x is not greater than y\n"))
         ),
-        # write second string
-        Assign(Var('result2'), 
-            Syscall(1, [Value(1), Var('message2'), Value(15)])
-        )
+        
+        # Print first message
+        Syscall(1, [Value(1), Var('message1'), Value(31)]),
+        
+        # Test loop - count down y to 0
+        Loop(
+            Var('y'),  # Continue while y > 0
+            Assign(Var('y'), Sub(Var('y'), Value(1)))
+        ),
+        
+        # Test if after loop
+        If(
+            Eq(Var('y'), Value(0)),
+            Assign(Var('message2'), String("Second: y is now zero\n")),
+            Assign(Var('message2'), String("Second: y is not zero\n"))
+        ),
+        
+        # Print second message
+        Syscall(1, [Value(1), Var('message2'), Value(30)])
     ]
 
     gen = CodeGenerator(debug=True)
