@@ -30,7 +30,7 @@ class Sub(Node):
         self.left = left
         self.right = right
 
-class While(Node):
+class Loop(Node):
     def __init__(self, condition, body):
         super().__init__()
         self.condition = condition
