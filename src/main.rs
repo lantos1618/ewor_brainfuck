@@ -680,20 +680,59 @@ fn main() -> Result<()> {
     let message = "Hello World!".as_bytes().to_vec();
 
     let program = BfNode::Block(vec![
-        // prime syscall area
         BfNode::Assign("trigger".to_string(), Box::new(BfNode::Byte(0))),
-        BfNode::Assign("syscall_num".to_string(), Box::new(BfNode::Byte(1))),
+        BfNode::Assign(
+            "syscall_num".to_string(),
+            Box::new(BfNode::Bytes(0u32.to_le_bytes().to_vec())),
+        ),
+        BfNode::Assign(
+            "syscall_arg_0".to_string(),
+            Box::new(BfNode::Bytes(0usize.to_le_bytes().to_vec())),
+        ),
+        BfNode::Assign(
+            "syscall_arg_1".to_string(),
+            Box::new(BfNode::Bytes(0usize.to_le_bytes().to_vec())),
+        ),
+        // syscall_arg_2
+        BfNode::Assign(
+            "syscall_arg_2".to_string(),
+            Box::new(BfNode::Bytes(0usize.to_le_bytes().to_vec())),
+        ),
+        // syscall_arg_3
+        BfNode::Assign(
+            "syscall_arg_3".to_string(),
+            Box::new(BfNode::Bytes(0usize.to_le_bytes().to_vec())),
+        ),
+        // syscall_arg_4
+        BfNode::Assign(
+            "syscall_arg_4".to_string(),
+            Box::new(BfNode::Bytes(0usize.to_le_bytes().to_vec())),
+        ),
+        // syscall_arg_5
+        BfNode::Assign(
+            "syscall_arg_5".to_string(),
+            Box::new(BfNode::Bytes(0usize.to_le_bytes().to_vec())),
+        ),
+        // syscall_result
+        BfNode::Assign(
+            "syscall_result".to_string(),
+            Box::new(BfNode::Bytes(0usize.to_le_bytes().to_vec())),
+        ),
+        // our program
         BfNode::Assign(
             "message".to_string(),
             Box::new(BfNode::Bytes(message.clone())),
         ),
-        BfNode::Syscall(
-            Box::new(BfNode::Byte(1)),
-            vec![
-                BfNode::Byte(1),
-                BfNode::Var("message".to_string()),
-                BfNode::Byte(14),
-            ],
+        BfNode::Assign(
+            "syscall_result".to_string(),
+            Box::new(BfNode::Syscall(
+                Box::new(BfNode::Byte(1)),
+                vec![
+                    BfNode::Byte(1),
+                    BfNode::Var("message".to_string()),
+                    BfNode::Byte(message.len() as u8),
+                ],
+            )),
         ),
     ]);
 
