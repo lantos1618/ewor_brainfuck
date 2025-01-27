@@ -4,11 +4,6 @@ use std::fmt;
 use syscalls::{syscall, SyscallArgs, Sysno};
 use thiserror::Error;
 
-/* -----------------------------------------------------------------------------------
- * Errors
- * -----------------------------------------------------------------------------------
- */
-
 #[derive(Error, Debug)]
 pub enum BfGenError {
     #[error("Invalid syscall number")]
@@ -31,78 +26,27 @@ pub enum BfVmError {
     InvalidSyscallNumber,
 }
 
-/* -----------------------------------------------------------------------------------
- * AST Nodes
- * -----------------------------------------------------------------------------------
- *
- * BfNode is our AST (Abstract Syntax Tree) node type. We keep it flexible and
- * easy to extend. Each variant captures a language construct we need to generate.
- */
-
 #[derive(Debug, Clone)]
 pub enum BfNode {
-    // Single byte literal
     Byte(u8),
-
-    // Arbitrary bytes literal
     Bytes(Vec<u8>),
-
-    // Variable reference
     Var(String),
-
-    // Assignment: variable name, expression
     Assign(String, Box<BfNode>),
-
-    // Copy: copies 'size' bytes from source var to destination var
-    // Copy(source_var, dest_var, size)
     Copy(String, String, usize),
-
-    // Pointer manipulation (e.g., we might offset from a known var)
-    // Ptr(var_name, offset)
     Ptr(String, isize),
-
-    // Syscall: first node is the syscall number, followed by arguments
     Syscall(Box<BfNode>, Vec<BfNode>),
-
-    // Control flow: if cond then block
     If(Box<BfNode>, Box<BfNode>),
-
-    // Control flow: while cond do block
     While(Box<BfNode>, Box<BfNode>),
-
-    // Equality check: eq(a, b)
     Eq(Box<BfNode>, Box<BfNode>),
-
-    // Less-than check: lt(a, b)
     Lt(Box<BfNode>, Box<BfNode>),
-
-    // A sequence of nodes
     Block(Vec<BfNode>),
 }
 
-/* -----------------------------------------------------------------------------------
- * Internal Memory Representation for Variables
- * -----------------------------------------------------------------------------------
- *
- * We track memory positions for variables in a conceptual linear memory array.
- * This array is mapped onto Brainfuck cells. MemoryCell tracks where each var
- * is placed, how big it is, etc.
- */
-
 #[derive(Clone)]
 pub struct MemoryCell {
-    pub ptr: usize,  // Where in the BF cell tape the variable resides
-    pub size: usize, // How many cells (bytes) it occupies
+    pub ptr: usize,
+    pub size: usize,
 }
-
-/* -----------------------------------------------------------------------------------
- * Code Generation Output
- * -----------------------------------------------------------------------------------
- *
- * We keep a list of (bf_code, debug_message, indentation) so we can either
- * produce raw BF code or produce debug lines. This helps with debugging or
- * analyzing generated BF code.
- */
 
 pub struct CGOutput {
     pub bf: String,
@@ -118,34 +62,18 @@ impl fmt::Display for CGOutput {
 
 impl CGOutput {
     pub fn debug_output(&self) -> String {
-        // Optionally indent for readability
         let indent_str = " ".repeat(self.indent * 4);
         format!("{}{} // {}", indent_str, self.bf, self.debug)
     }
 }
 
-/* -----------------------------------------------------------------------------------
- * Brainfuck Code Generator
- * -----------------------------------------------------------------------------------
- *
- * The code generator walks the AST and generates Brainfuck instructions that
- * produce the desired behavior. We keep track of a conceptual 'current_ptr'
- * that indicates where our BF pointer currently is, so we can generate < or >
- * instructions to move it around as needed.
- */
-
 pub struct BfCodeGenerator {
     pub output: Vec<CGOutput>,
     pub debug: bool,
     pub indent_level: usize,
-
-    // Conceptual memory and variable->cell mapping
-    pub memory: Vec<u8>, // Not strictly necessary, but can help track content
+    pub memory: Vec<u8>,
     pub cells: HashMap<String, MemoryCell>,
-    pub current_ptr: usize, // Where the BF tape pointer is
-
-    // Keep track of the next free cell for "heap" usage
-    // Start after syscall memory zone (0-7)
+    pub current_ptr: usize,
     pub next_free_cell: usize,
 }
 
@@ -158,37 +86,19 @@ impl BfCodeGenerator {
             memory: vec![],
             cells: HashMap::new(),
             current_ptr: 0,
-            next_free_cell: 8, // Start allocations after syscall memory zone
+            next_free_cell: 8,
         }
     }
-
-    /* -------------------------------------------------------------------------------
-     * Memory Allocation
-     * -------------------------------------------------------------------------------
-     *
-     * We'll keep it simple: we just push memory onto the end of our conceptual array.
-     * The BF code generator doesn't necessarily need the real data, but we track it
-     * for completeness. This also ensures we know how many cells we've used.
-     */
 
     pub fn alloc_cells(&mut self, size: usize) -> Result<(usize, usize)> {
         let start = self.next_free_cell;
         self.next_free_cell += size;
 
-        // Extend memory array if needed
         if self.memory.len() < self.next_free_cell {
             self.memory.resize(self.next_free_cell, 0);
         }
         Ok((start, size))
     }
-
-    /* -------------------------------------------------------------------------------
-     * Output Recording
-     * -------------------------------------------------------------------------------
-     *
-     * We capture small chunks of BF code as CGOutput. This helps us interleave
-     * debug messages with raw BF instructions.
-     */
 
     fn push_output(&mut self, bf: String, debug: String) {
         self.output.push(CGOutput {
@@ -197,13 +107,6 @@ impl BfCodeGenerator {
             indent: self.indent_level,
         });
     }
-
-    /* -------------------------------------------------------------------------------
-     * Pointer Movement
-     * -------------------------------------------------------------------------------
-     *
-     * Moves the BF pointer from self.current_ptr to 'target'.
-     */
 
     fn generate_ptr_move(&mut self, target: usize) -> CGOutput {
         let from = self.current_ptr;
@@ -221,14 +124,6 @@ impl BfCodeGenerator {
         }
     }
 
-    /* -------------------------------------------------------------------------------
-     * Common BF Routines
-     * -------------------------------------------------------------------------------
-     *
-     * - generate_clear_cell: sets current cell to 0, i.e. "[-]"
-     * - generate_number: increments current cell to a given value
-     */
-
     fn generate_clear_cell(&self) -> CGOutput {
         CGOutput {
             bf: "[-]".to_string(),
@@ -245,88 +140,57 @@ impl BfCodeGenerator {
         }
     }
 
-    /* -------------------------------------------------------------------------------
-     * Simple Byte or Bytes Generation
-     * -------------------------------------------------------------------------------
-     */
-
     fn set_byte(&mut self, cell_pos: usize, value: u8) -> Vec<CGOutput> {
-        let mut ret = vec![];
-        // Move pointer to cell_pos
-        ret.push(self.generate_ptr_move(cell_pos));
-        // Clear cell
-        ret.push(self.generate_clear_cell());
-        // Increment to the desired value
-        ret.push(self.generate_number(value));
-        ret
+        vec![
+            self.generate_ptr_move(cell_pos),
+            self.generate_clear_cell(),
+            self.generate_number(value),
+        ]
     }
 
     fn set_bytes(&mut self, bytes: &[u8]) -> Vec<CGOutput> {
         let mut ret = vec![];
         let (start_pos, size) = self
-            .alloc_cells(bytes.len()) // might fail in real code, ignoring
+            .alloc_cells(bytes.len())
             .expect("Failed to alloc for set_bytes");
 
-        // For each byte, set it
         for (i, &byte) in bytes.iter().enumerate() {
             ret.extend(self.set_byte(start_pos + i, byte));
         }
         ret
     }
 
-    /* -------------------------------------------------------------------------------
-     * Copy Bytes (source_var -> dest_var)
-     * -------------------------------------------------------------------------------
-     *
-     * This is a standard Brainfuck trick:
-     *   We'll do two passes:
-     *    - a "transfer" loop that drains 'source' into 'dest' and a 'temp' cell
-     *    - a "restore" loop that moves from 'temp' back into 'source'
-     */
-
     fn copy_bytes_impl(&mut self, src_pos: usize, dst_pos: usize, size: usize) -> Result<()> {
-        // For each byte
         for offset in 0..size {
             let from = src_pos + offset;
             let to = dst_pos + offset;
-            // We'll use to+1 as our temp cell
             let temp = to + 1;
 
             self.indent_level += 1;
 
-            // Store the move result first
             let move_result = self.generate_ptr_move(from);
             self.output.push(move_result);
 
-            // Transfer loop: moves from 'from' to 'to' and 'temp'
-            //  [-  (while source not zero)
-            //    >... move pointer to 'to', increment
-            //    >... move pointer to 'temp', increment
-            //    <... back to 'from'
-            //  ]
             {
                 let mut bf = String::new();
-                bf.push_str("[-"); // start loop
-                                   // move to 'to'
+                bf.push_str("[-");
                 if to >= from {
                     bf.push_str(&">".repeat(to - from));
                 } else {
                     bf.push_str(&"<".repeat(from - to));
                 }
-                bf.push('+'); // increment 'to'
+                bf.push('+');
 
-                // move to 'temp'
                 bf.push('>');
-                bf.push('+'); // increment 'temp'
+                bf.push('+');
 
-                // move back to 'from'
                 if to >= from {
                     bf.push_str(&"<".repeat(to - from + 1));
                 } else {
                     bf.push_str(&">".repeat(from - to - 1));
                 }
 
-                bf.push(']'); // end loop
+                bf.push(']');
 
                 self.push_output(
                     bf,
@@ -334,40 +198,31 @@ impl BfCodeGenerator {
                 );
             }
 
-            // Move to 'temp' - store intermediate results
             let move_to_from = self.generate_ptr_move(from);
             self.output.push(move_to_from);
             let move_to_temp = self.generate_ptr_move(temp);
             self.output.push(move_to_temp);
 
-            // Restoration loop: move from 'temp' back into 'from'
-            //  [-  (while temp not zero)
-            //    >... move to 'from', increment
-            //    <... back to 'temp'
-            //  ]
             {
                 let mut bf = String::new();
                 bf.push_str("[-");
-                // move to 'from'
                 if from >= temp {
                     bf.push_str(&">".repeat(from - temp));
                 } else {
                     bf.push_str(&"<".repeat(temp - from));
                 }
-                bf.push('+'); // increment 'from'
+                bf.push('+');
 
-                // move back to 'temp'
                 if from >= temp {
                     bf.push_str(&"<".repeat(from - temp));
                 } else {
                     bf.push_str(&">".repeat(temp - from));
                 }
-                bf.push(']'); // end loop
+                bf.push(']');
 
                 self.push_output(bf, format!("restore source at cell {}", from));
             }
 
-            // Move pointer to 'to' as the final position - store intermediate results
             let move_to_temp_final = self.generate_ptr_move(temp);
             self.output.push(move_to_temp_final);
             let move_to_to = self.generate_ptr_move(to);
@@ -378,13 +233,14 @@ impl BfCodeGenerator {
         Ok(())
     }
 
-    /* -------------------------------------------------------------------------------
-     * Master Generate Function
-     * -------------------------------------------------------------------------------
-     *
-     * Walk the BfNode and produce Brainfuck instructions. We rely on helper
-     * methods for smaller tasks (bytes, copy, etc.).
-     */
+    fn set_i64(&mut self, cell_pos: usize, value: i64) -> Vec<CGOutput> {
+        let bytes = value.to_le_bytes();
+        let mut result = vec![];
+        for (i, &byte) in bytes.iter().enumerate() {
+            result.extend(self.set_byte(cell_pos + i, byte));
+        }
+        result
+    }
 
     pub fn generate(&mut self, node: &BfNode) -> Result<()> {
         match node {
@@ -400,30 +256,24 @@ impl BfCodeGenerator {
             }
 
             BfNode::Var(name) => {
-                // Get cell info first
                 let cell = self
                     .cells
                     .get(name)
                     .ok_or_else(|| BfGenError::InvalidVarName)?
-                    .clone(); // Clone to avoid borrow issues
+                    .clone();
 
-                // Allocate new region of same size
                 let (new_pos, _) = self.alloc_cells(cell.size)?;
-                // Perform the copy
                 self.copy_bytes_impl(cell.ptr, new_pos, cell.size)?;
             }
 
             BfNode::Assign(var_name, expr) => {
-                // Evaluate 'expr' into newly allocated memory
                 let before_alloc = self.next_free_cell;
-                self.generate(expr)?; // This will allocate
+                self.generate(expr)?;
                 let after_alloc = self.next_free_cell;
 
-                // The new expression's data is presumably in the range [before_alloc, after_alloc)
                 let size = after_alloc - before_alloc;
                 let cell_ptr = before_alloc;
 
-                // Register it in cells
                 self.cells.insert(
                     var_name.clone(),
                     MemoryCell {
@@ -434,17 +284,16 @@ impl BfCodeGenerator {
             }
 
             BfNode::Copy(src_var, dst_var, size) => {
-                // Get source and destination info first
                 let src_cell = self
                     .cells
                     .get(src_var)
                     .ok_or_else(|| BfGenError::InvalidVarName)?
-                    .clone(); // Clone to avoid borrow issues
+                    .clone();
                 let dst_cell = self
                     .cells
                     .get(dst_var)
                     .ok_or_else(|| BfGenError::InvalidVarName)?
-                    .clone(); // Clone to avoid borrow issues
+                    .clone();
 
                 if src_cell.size < *size || dst_cell.size < *size {
                     return Err(BfGenError::InvalidMemoryAccess.into());
@@ -454,14 +303,12 @@ impl BfCodeGenerator {
             }
 
             BfNode::Ptr(var_name, offset) => {
-                // Get base cell info first
                 let base_cell = self
                     .cells
                     .get(var_name)
                     .ok_or_else(|| BfGenError::InvalidVarName)?
-                    .clone(); // Clone to avoid borrow issues
+                    .clone();
 
-                // The final cell is base_cell.ptr + offset
                 let final_ptr = if offset.is_negative() {
                     base_cell.ptr.checked_sub(offset.unsigned_abs())
                 } else {
@@ -469,28 +316,34 @@ impl BfCodeGenerator {
                 }
                 .ok_or_else(|| BfGenError::InvalidMemoryAccess)?;
 
-                // Allocate and store pointer value
+                // For now, we need to keep pointers within byte range since the VM treats everything as bytes
+                if final_ptr > 255 {
+                    return Err(BfGenError::InvalidMemoryAccess.into());
+                }
+
                 let (pos, _) = self.alloc_cells(1)?;
                 let move_result = self.generate_ptr_move(pos);
                 self.output.push(move_result);
                 self.output.push(self.generate_clear_cell());
 
-                // Not realistic to produce final_ptr increments if final_ptr is large, but for demo:
-                let increments = final_ptr.min(255);
                 self.output.push(CGOutput {
-                    bf: "+".repeat(increments),
-                    debug: format!("(demo) set pointer address = {}", final_ptr),
+                    bf: "+".repeat(final_ptr),
+                    debug: format!("set pointer address = {}", final_ptr),
                     indent: self.indent_level,
                 });
             }
 
             BfNode::Syscall(num_expr, args_exprs) => {
-                // 1) Evaluate the syscall number into a new cell
+                // First allocate space for the result at current position
+                let result_pos = self.next_free_cell;
+                let (_, _) = self.alloc_cells(8)?; // i64 size
+
+                // Generate syscall number
                 let before_num = self.next_free_cell;
                 self.generate(num_expr)?;
                 let syscall_num_cell = before_num;
 
-                // 2) Evaluate each argument
+                // Generate arguments
                 let mut arg_cells = vec![];
                 for arg_expr in args_exprs {
                     let before_arg = self.next_free_cell;
@@ -499,46 +352,48 @@ impl BfCodeGenerator {
                     arg_cells.push(before_arg..after_arg);
                 }
 
-                // 3) Set up syscall
+                // Trigger syscall
                 {
-                    // Move pointer to 0 and set marker
+                    // Set trigger
                     let move_to_zero = self.generate_ptr_move(0);
                     self.output.push(move_to_zero);
                     self.output.push(self.generate_clear_cell());
                     self.output.push(self.generate_number(255));
 
-                    // Copy the syscall number to cell 1
-                    self.copy_bytes_impl(syscall_num_cell, 1, 1)?;
+                    // Copy syscall number to position 1 (as i64)
+                    let num_value = self.memory[syscall_num_cell];
+                    let code = self.set_i64(1, num_value as i64);
+                    self.output.extend(code);
 
-                    // Copy each argument to subsequent cells
-                    let mut cell_idx = 2;
+                    // Copy arguments (each as i64)
+                    let mut dest_pos = 9; // After trigger(1) and syscall_num(8)
                     for rng in arg_cells {
-                        let len = rng.end - rng.start;
-                        self.copy_bytes_impl(rng.start, cell_idx, len)?;
-                        cell_idx += len;
+                        let value = self.memory[rng.start];
+                        let code = self.set_i64(dest_pos, value as i64);
+                        self.output.extend(code);
+                        dest_pos += 8;
                     }
 
-                    // Trigger syscall
                     self.push_output(".".to_string(), "trigger syscall".to_string());
+
+                    // Move back to result position
+                    let move_to_result = self.generate_ptr_move(result_pos);
+                    self.output.push(move_to_result);
                 }
             }
 
             BfNode::If(cond_expr, body_expr) => {
-                // Evaluate the condition into a cell
                 let before_cond = self.next_free_cell;
                 self.generate(cond_expr)?;
                 let cond_cell = before_cond;
 
-                // Move to condition cell and start loop
                 let move_result = self.generate_ptr_move(cond_cell);
                 self.output.push(move_result);
                 self.push_output("[".to_string(), "if: start loop".to_string());
 
-                // Indent and generate body
                 self.indent_level += 1;
                 self.generate(body_expr)?;
 
-                // Clear condition and end loop
                 let move_back = self.generate_ptr_move(cond_cell);
                 self.output.push(move_back);
                 self.output.push(self.generate_clear_cell());
@@ -548,12 +403,10 @@ impl BfCodeGenerator {
             }
 
             BfNode::While(cond_expr, body_expr) => {
-                // Evaluate condition first
                 let before_cond = self.next_free_cell;
                 self.generate(cond_expr)?;
                 let cond_cell = before_cond;
 
-                // Move to condition and start loop
                 let move_result = self.generate_ptr_move(cond_cell);
                 self.output.push(move_result);
                 self.push_output("[".to_string(), "while: start loop".to_string());
@@ -567,7 +420,6 @@ impl BfCodeGenerator {
             }
 
             BfNode::Eq(a_expr, b_expr) => {
-                // eq(a, b) sets up a cell that is 1 if a == b, 0 otherwise
                 let a_start = self.next_free_cell;
                 self.generate(a_expr)?;
                 let a_end = self.next_free_cell;
@@ -602,6 +454,7 @@ impl BfCodeGenerator {
                         bf.push_str(&">".repeat(b_cell - result_cell));
                     }
                     bf.push(']');
+
                     self.push_output(bf, "subtract b from result".to_string());
                 } else {
                     self.push_output(
@@ -612,7 +465,6 @@ impl BfCodeGenerator {
             }
 
             BfNode::Lt(a_expr, b_expr) => {
-                // We'll do a minimal version: single-byte (a < b)
                 let a_start = self.next_free_cell;
                 self.generate(a_expr)?;
                 let a_end = self.next_free_cell;
@@ -622,7 +474,6 @@ impl BfCodeGenerator {
                 let b_end = self.next_free_cell;
 
                 if (a_end - a_start) == 1 && (b_end - b_start) == 1 {
-                    // We would do a < b. For a real solution, we might create code to do so.
                     self.push_output("".to_string(), "lt(a,b) single-byte: stub".to_string());
                 } else {
                     self.push_output(
@@ -633,7 +484,6 @@ impl BfCodeGenerator {
             }
 
             BfNode::Block(nodes) => {
-                // Just generate code for each child in order
                 let block_start = CGOutput {
                     bf: "".to_string(),
                     debug: "begin block".to_string(),
@@ -658,14 +508,6 @@ impl BfCodeGenerator {
         Ok(())
     }
 
-    /* -------------------------------------------------------------------------------
-     * Final Output
-     * -------------------------------------------------------------------------------
-     *
-     * If debug mode is ON, we produce lines with comments.
-     * Otherwise, we produce raw BF instructions concatenated.
-     */
-
     pub fn get_formatted_output(&self) -> String {
         if self.debug {
             self.output
@@ -683,25 +525,10 @@ impl BfCodeGenerator {
     }
 }
 
-/* -----------------------------------------------------------------------------------
- * Brainfuck VM
- * -----------------------------------------------------------------------------------
- *
- * A simplistic BF interpreter. We skip implementing loops fully for brevity; if
- * you'd like a fully functional BF interpreter, you'd implement bracket matching,
- * etc. The key piece is that we detect '.' with memory[self.ptr] == 255 as a marker
- * for a syscall. Everything else is standard BF steps.
- */
-
 pub struct BrainfuckVM {
     pub memory: Vec<u8>,
     pub ptr: usize,
     pub debug: bool,
-    // Memory layout:
-    // [0]: syscall marker (255 indicates syscall)
-    // [1]: syscall number
-    // [2-7]: syscall arguments (up to 6)
-    // [8+]: heap space for program use
     pub heap_start: usize,
 }
 
@@ -711,8 +538,65 @@ impl BrainfuckVM {
             memory: vec![0; memory_size],
             ptr: 0,
             debug,
-            heap_start: 8, // First 8 cells (0-7) reserved for syscall
+            // Reserve space for syscall trigger only, everything else is dynamic
+            heap_start: 1,
         }
+    }
+
+    fn handle_syscall(&mut self) -> Result<()> {
+        // byte trigger
+        // u32 syscall_number (1..5)
+        // usize syscall_arg_0 (5..13)
+        // usize syscall_arg_1 (13..21)
+        // usize syscall_arg_2 (21..29)
+        // usize syscall_arg_3 (29..37)
+        // usize syscall_arg_4 (37..45)
+        // usize syscall_arg_5 (45..53)
+
+        // usize syscall_result we put this where current pointer is
+        // usize on macos aarch64 is 64-bit
+
+        let syscall_num_start = 1;
+        let syscall_num_end = syscall_num_start + size_of::<u32>();
+        let syscall_num: u32 = u32::from_le_bytes(
+            self.memory[syscall_num_start..syscall_num_end]
+                .try_into()
+                .unwrap(),
+        );
+
+        let syscall_arg_start = syscall_num_end + 1;
+        let mut syscall_args = [0usize; 6];
+        for (i, arg) in syscall_args.iter_mut().enumerate() {
+            let start = syscall_arg_start + i * size_of::<usize>();
+            let end = start + size_of::<usize>();
+            *arg = usize::from_le_bytes(self.memory[start..end].try_into()?);
+        }
+
+        // size = 4, align = 0x4
+        let nr = Sysno::from(syscall_num);
+        let sa = SyscallArgs::new(
+            syscall_args[0],
+            syscall_args[1],
+            syscall_args[2],
+            syscall_args[3],
+            syscall_args[4],
+            syscall_args[5],
+        );
+
+        let result = unsafe {
+            match syscall(nr, &sa) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Syscall failed: {}", e);
+                    return Err(BfVmError::SyscallFailed.into());
+                }
+            }
+        };
+
+        // Write result to current pointer position
+        let result_bytes = result.to_le_bytes();
+        self.memory[self.ptr..self.ptr + size_of::<usize>()].copy_from_slice(&result_bytes);
+        Ok(())
     }
 
     fn move_ptr(&mut self, offset: isize) -> Result<()> {
@@ -733,6 +617,7 @@ impl BrainfuckVM {
     pub fn run(&mut self, code: &str) -> Result<()> {
         let mut pc = 0;
         let instructions: Vec<char> = code.chars().collect();
+        let mut bracket_stack = Vec::new();
 
         while pc < instructions.len() {
             match instructions[pc] {
@@ -745,90 +630,68 @@ impl BrainfuckVM {
                     self.memory[self.ptr] = self.memory[self.ptr].wrapping_sub(1);
                 }
                 '.' => {
-                    // If we see '.' and the cell has 255 => syscall
-                    if self.memory[self.ptr] == 255 {
+                    if self.ptr == 0 && self.memory[0] == 255 {
                         self.handle_syscall()?;
                     } else {
-                        // For normal '.' we output the character in memory
                         print!("{}", self.memory[self.ptr] as char);
                     }
                 }
                 ',' => {
-                    // Basic input read
                     let mut input = String::new();
                     std::io::stdin().read_line(&mut input)?;
                     if let Some(ch) = input.chars().next() {
                         self.memory[self.ptr] = ch as u8;
                     }
                 }
-                '[' | ']' => {
-                    // Not fully implemented. In real code, you'd implement bracket matching
-                    // and jumps. We'll skip it for brevity.
-                    // This means "If" / "While" won't truly work in this basic VM unless
-                    // you do bracket matching, etc.
+                '[' => {
+                    if self.memory[self.ptr] == 0 {
+                        let mut depth = 1;
+                        while depth > 0 && pc < instructions.len() {
+                            pc += 1;
+                            match instructions[pc] {
+                                '[' => depth += 1,
+                                ']' => depth -= 1,
+                                _ => {}
+                            }
+                        }
+                    } else {
+                        bracket_stack.push(pc);
+                    }
                 }
-                _ => { /* ignore any other chars */ }
+                ']' => {
+                    if self.memory[self.ptr] != 0 {
+                        if let Some(start) = bracket_stack.last() {
+                            pc = *start;
+                            continue;
+                        }
+                    } else {
+                        bracket_stack.pop();
+                    }
+                }
+                _ => {}
             }
             pc += 1;
         }
         Ok(())
     }
-
-    fn handle_syscall(&mut self) -> Result<()> {
-        // We assume memory layout:
-        // cell[0] = 255 indicates do_syscall
-        // cell[1] = syscall number
-        // cell[2..8] = up to 6 arguments
-        let syscall_num = self.memory[1];
-        let args: Vec<usize> = self.memory[2..8].iter().map(|&x| x as usize).collect();
-
-        // Attempt the syscall
-        let nr = Sysno::from(syscall_num as i32);
-        let sa = SyscallArgs::new(args[0], args[1], args[2], args[3], args[4], args[5]);
-
-        let result = unsafe {
-            match syscall(nr, &sa) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Syscall failed: {}", e);
-                    return Err(BfVmError::SyscallFailed.into());
-                }
-            }
-        };
-
-        // Store result in cell[0] for demonstration
-        self.memory[0] = result as u8;
-        Ok(())
-    }
 }
 
-/* -----------------------------------------------------------------------------------
- * Example Main
- * -----------------------------------------------------------------------------------
- *
- * This demonstrates building a small AST and generating BF code, then running it.
- */
-
 fn main() -> Result<()> {
-    // "Hello World!"
     let message = "Hello World!".as_bytes().to_vec();
 
-    // Example program:
-    //   var message = "Hello World!"
-    //   syscall(1, message, message.len())
     let program = BfNode::Block(vec![
+        // prime syscall area
+        BfNode::Assign("trigger".to_string(), Box::new(BfNode::Byte(0))),
+        BfNode::Assign("syscall_num".to_string(), Box::new(BfNode::Byte(1))),
         BfNode::Assign(
             "message".to_string(),
             Box::new(BfNode::Bytes(message.clone())),
         ),
         BfNode::Syscall(
-            // Syscall number 1 (on many systems = write)
             Box::new(BfNode::Byte(1)),
             vec![
                 BfNode::Byte(1),
-                // Arg0 => pointer to 'message'
-                BfNode::Ptr("message".to_string(), 0),
-                // Arg1 => length of 'message'
+                BfNode::Var("message".to_string()),
                 BfNode::Byte(14),
             ],
         ),
