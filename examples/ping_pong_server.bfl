@@ -1,0 +1,67 @@
+// Simple ping-pong server that echoes back whatever is sent
+// Usage: nc localhost 8080
+
+// Create socket (AF_INET=2, SOCK_STREAM=1, 0)
+syscall(41, 2, 1, 0);
+fd = _syscall_result;
+
+// Bind to localhost:8080
+// struct sockaddr_in { AF_INET=2, port=8080, addr=127.0.0.1 }
+addr = [2, 0, 31, 144, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+syscall(49, fd, addr, 16);
+
+// Listen for connections
+syscall(50, fd, 1);
+
+// Accept connection
+syscall(43, fd, 0, 0);
+client_fd = _syscall_result;
+
+// Read buffer
+buf = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+// Read data from client
+syscall(0, client_fd, buf, 16);
+bytes_read = _syscall_result;
+
+// Echo back the same data
+syscall(1, client_fd, buf, bytes_read);
+
+// Close client connection
+syscall(3, client_fd);
+
+// Close server socket
+syscall(3, fd); 
+// Usage: nc localhost 8080
+
+// Create socket (AF_INET=2, SOCK_STREAM=1, 0)
+syscall(41, 2, 1, 0);
+fd = _syscall_result;
+
+// Bind to localhost:8080
+// struct sockaddr_in { AF_INET=2, port=8080, addr=127.0.0.1 }
+addr = [2, 0, 31, 144, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+syscall(49, fd, addr, 16);
+
+// Listen for connections
+syscall(50, fd, 1);
+
+// Accept connection
+syscall(43, fd, 0, 0);
+client_fd = _syscall_result;
+
+// Read buffer
+buf = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+// Read data from client
+syscall(0, client_fd, buf, 16);
+bytes_read = _syscall_result;
+
+// Echo back the same data
+syscall(1, client_fd, buf, bytes_read);
+
+// Close client connection
+syscall(3, client_fd);
+
+// Close server socket
+syscall(3, fd); 
