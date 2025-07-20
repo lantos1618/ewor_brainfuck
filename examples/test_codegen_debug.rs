@@ -1,8 +1,6 @@
 use ewor_brainfuck::bfl::{BFLCompiler, BFLNode};
 
 fn main() {
-    let mut compiler = BFLCompiler::new();
-    
     // Test 1: Just assign a number
     println!("=== Test 1: Number assignment ===");
     let mut compiler1 = BFLCompiler::new();
@@ -11,7 +9,8 @@ fn main() {
     ]);
     compiler1.compile(&program1).unwrap();
     let code1 = compiler1.get_output();
-    println!("Number assignment: {} chars", code1.len());
+    let optimized1 = compiler1.get_optimized_output_copy();
+    println!("Number assignment: {} chars (optimized: {} chars)", code1.len(), optimized1.len());
     println!("Code: {}", &code1[..code1.len().min(200)]);
     
     // Test 2: Assign a string
@@ -22,7 +21,8 @@ fn main() {
     ]);
     compiler2.compile(&program2).unwrap();
     let code2 = compiler2.get_output();
-    println!("String assignment: {} chars", code2.len());
+    let optimized2 = compiler2.get_optimized_output_copy();
+    println!("String assignment: {} chars (optimized: {} chars)", code2.len(), optimized2.len());
     println!("Code: {}", &code2[..code2.len().min(200)]);
     
     // Test 3: Simple loop with number
@@ -45,7 +45,8 @@ fn main() {
     ]);
     compiler3.compile(&program3).unwrap();
     let code3 = compiler3.get_output();
-    println!("Simple loop: {} chars", code3.len());
+    let optimized3 = compiler3.get_optimized_output_copy();
+    println!("Simple loop: {} chars (optimized: {} chars)", code3.len(), optimized3.len());
     println!("Code: {}", &code3[..code3.len().min(200)]);
     
     // Test 4: Loop with string assignment inside
@@ -69,6 +70,7 @@ fn main() {
     ]);
     compiler4.compile(&program4).unwrap();
     let code4 = compiler4.get_output();
-    println!("Loop with string: {} chars", code4.len());
+    let optimized4 = compiler4.get_optimized_output_copy();
+    println!("Loop with string: {} chars (optimized: {} chars)", code4.len(), optimized4.len());
     println!("Code: {}", &code4[..code4.len().min(200)]);
 } 
