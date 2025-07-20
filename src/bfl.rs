@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-const SCRATCH_1: usize = 30000;
-const SCRATCH_2: usize = 30001;
-// No longer need SCRATCH_3 for the simplified subtraction logic
+// Use cells closer to variables for better efficiency
+const SCRATCH_1: usize = 100;
+const SCRATCH_2: usize = 101; // Adjacent to SCRATCH_1 for efficient copying
 
 #[derive(Debug, Clone)]
 pub enum BFLNode {
@@ -56,6 +56,29 @@ impl BFLCompiler {
             self.output.push_str(&"<".repeat(self.current_ptr - target));
         }
         self.current_ptr = target;
+    }
+
+    // Optimized copy for adjacent cells
+    fn copy_adjacent(&mut self, src: usize, dest: usize) {
+        if src == dest {
+            return;
+        }
+        
+        // For adjacent cells, use the standard BF copy pattern: [->+<]
+        if src + 1 == dest {
+            // src and dest are adjacent, src < dest
+            self.move_to(src);
+            self.output.push_str("[->+<]");
+            self.current_ptr = dest;
+        } else if dest + 1 == src {
+            // src and dest are adjacent, dest < src
+            self.move_to(dest);
+            self.output.push_str("[->+<]");
+            self.current_ptr = src;
+        } else {
+            // Not adjacent, fall back to general copy
+            self.copy_value(src, dest);
+        }
     }
 
     // Non-destructive copy from src to dest. Pointer ends at dest.
@@ -193,7 +216,13 @@ impl BFLCompiler {
             }
             BFLNode::Variable(name) => {
                 let src = *self.variables.get(name).ok_or(format!("Variable '{}' not found", name))?;
-                self.copy_value(src, dest);
+                // Use optimized copy for adjacent cells, fall back to general copy
+                if (src == SCRATCH_1 && dest == SCRATCH_2) || (src == SCRATCH_2 && dest == SCRATCH_1) {
+                    // Special case for scratch cells - they're adjacent
+                    self.copy_adjacent(src, dest);
+                } else {
+                    self.copy_value(src, dest);
+                }
             }
             BFLNode::String(s) => {
                 self.eval_to_cell(&BFLNode::Bytes(s.as_bytes().to_vec()), dest)?;
@@ -219,7 +248,7 @@ impl BFLCompiler {
                 self.eval_to_cell(lhs, dest)?; // Evaluate LHS into dest
                 self.eval_to_cell(rhs, SCRATCH_1)?; // Evaluate RHS into scratch
                 
-                // Add SCRATCH_1 to dest
+                // Add SCRATCH_1 to dest using optimized pattern
                 self.move_to(SCRATCH_1);
                 self.output.push_str("["); // while scratch is not zero
                 self.move_to(dest);

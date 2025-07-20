@@ -1,21 +1,9 @@
 use ewor_brainfuck::bf::{Mode, BF};
 use ewor_brainfuck::bfl::{BFLCompiler, BFLNode};
+use ewor_brainfuck::syscall_consts::*;
 use std::process::ExitCode;
 use std::env;
 use std::fs;
-
-// Using Linux x86_64 syscall numbers, as the devcontainer is Debian.
-const SYS_SOCKET: i32 = 41;
-const SYS_BIND: i32 = 49;
-const SYS_LISTEN: i32 = 50;
-const SYS_ACCEPT: i32 = 43;
-const SYS_READ: i32 = 0;
-const SYS_WRITE: i32 = 1;
-const SYS_CLOSE: i32 = 3;
-
-// Socket constants
-const AF_INET: i32 = 2;
-const SOCK_STREAM: i32 = 1;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();

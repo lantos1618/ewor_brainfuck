@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::io::Write;
 use syscalls::Sysno;
+use crate::syscall_consts::*;
 
 #[derive(Debug)]
 pub enum BFError {
@@ -152,6 +153,9 @@ impl BF {
                             _ => {}
                         }
                     }
+                    // BUGFIX: The main loop will increment pc, so we need to
+                    // position it one before the target instruction.
+                    self.pc -= 1;
                 }
                 // Debug: print pointer and cell value after each loop iteration
                 // eprintln!("[BF DEBUG] After loop: ptr={}, cell[ptr]={}", self.ptr, self.cells[self.ptr]);
@@ -183,7 +187,7 @@ impl BF {
                 // In test mode, reject socket operations
                 #[cfg(test)]
                 {
-                    if syscall_num == 41 || syscall_num == 97 {
+                    if syscall_num == SYS_SOCKET as u32 {
                         return Err(BFError::InvalidSyscall(
                             "Permission denied: socket operations not allowed in test mode".to_string(),
                         ));
@@ -194,44 +198,37 @@ impl BF {
 
                 let result = unsafe {
                     match syscall_num {
-                        // Linux: 1, macOS: 4
-                        1 | 4 => { // write
+                        x if x == SYS_WRITE as u32 => {
                             let fd = args[0];
                             let buf_ptr = &self.cells[args[1]] as *const u32 as *const u8;
                             let count = args[2];
                             syscalls::syscall!(Sysno::write, fd, buf_ptr, count)
                         }
-                        // Linux: 41, macOS: 97
-                        41 | 97 => { // socket
+                        x if x == SYS_SOCKET as u32 => {
                             syscalls::syscall!(Sysno::socket, args[0], args[1], args[2])
                         }
-                        // Linux: 49, macOS: 104
-                        49 | 104 => { // bind
+                        x if x == SYS_BIND as u32 => {
                             let fd = args[0];
                             let sockaddr_ptr = &self.cells[args[1]] as *const u32 as *const u8;
                             let len = args[2];
                             syscalls::syscall!(Sysno::bind, fd, sockaddr_ptr, len)
                         }
-                        // Linux: 50, macOS: 106
-                        50 | 106 => { // listen
+                        x if x == SYS_LISTEN as u32 => {
                             syscalls::syscall!(Sysno::listen, args[0], args[1])
                         }
-                        // Linux: 43, macOS: 30
-                        43 | 30 => { // accept
+                        x if x == SYS_ACCEPT as u32 => {
                             let fd = args[0];
                             let sockaddr_ptr = &mut self.cells[args[1]] as *mut u32 as *mut u8;
                             let len_ptr = &mut self.cells[args[2]] as *mut u32;
                             syscalls::syscall!(Sysno::accept, fd, sockaddr_ptr, len_ptr)
                         }
-                        // Linux: 0, macOS: 3
-                        0 | 3 => { // read
+                        x if x == SYS_READ as u32 => {
                             let fd = args[0];
                             let buf_ptr = &mut self.cells[args[1]] as *mut u32 as *mut u8;
                             let count = args[2];
                             syscalls::syscall!(Sysno::read, fd, buf_ptr, count)
                         }
-                        // Linux: 3, macOS: 6
-                        3 => { // close
+                        x if x == SYS_CLOSE as u32 => {
                             syscalls::syscall!(Sysno::close, args[0])
                         }
                         _ => {
@@ -247,8 +244,8 @@ impl BF {
                     }
                     Err(e) => {
                          Err(BFError::SyscallFailed(format!(
-                            "Syscall {} failed: {}",
-                            syscall_num, e
+                            "Syscall {} failed: {} (args: {:?}, first 8 cells: {:?})",
+                            syscall_num, e, args, &self.cells[..8]
                         )))
                     }
                 }
@@ -262,7 +259,7 @@ impl BF {
 
         match syscall_num {
             // write, read
-            1 | 4 | 0 | 3 => {
+            x if x == SYS_WRITE as u32 || x == SYS_READ as u32 => {
                 let buf_addr = args[1];
                 let count = args[2];
                 if buf_addr.saturating_add(count) > max_addr {
@@ -270,7 +267,7 @@ impl BF {
                 }
             }
             // bind
-            49 | 104 => {
+            x if x == SYS_BIND as u32 => {
                 let sockaddr_addr = args[1];
                 let len = args[2];
                 if sockaddr_addr.saturating_add(len) > max_addr {
@@ -278,7 +275,7 @@ impl BF {
                 }
             }
             // accept
-            43 | 30 => {
+            x if x == SYS_ACCEPT as u32 => {
                  let sockaddr_addr = args[1];
                  let len_addr = args[2];
                  if sockaddr_addr >= max_addr || len_addr >= max_addr {
@@ -286,7 +283,7 @@ impl BF {
                  }
             }
             // socket, listen, close
-            41 | 97 | 50 | 106 | 6 => {}
+            x if x == SYS_SOCKET as u32 || x == SYS_LISTEN as u32 || x == SYS_CLOSE as u32 => {}
             _ => {} // Let the syscall fail for unknown numbers
         }
         Ok(())
