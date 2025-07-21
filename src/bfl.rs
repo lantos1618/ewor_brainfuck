@@ -81,6 +81,31 @@ impl BFLCompiler {
         }
     }
 
+    // Destructive move from src to dest. Pointer ends at dest.
+    // This is much more efficient than copy_value for cases where src can be consumed.
+    fn move_to_cell(&mut self, src: usize, dest: usize) {
+        if src == dest {
+            self.move_to(dest);
+            return;
+        }
+        
+        // Clear destination
+        self.move_to(dest);
+        self.output.push_str("[-]");
+        
+        // Move value from src to dest
+        self.move_to(src);
+        self.output.push_str("["); // while src is not zero
+        self.move_to(dest);
+        self.output.push('+'); // dest++
+        self.move_to(src);
+        self.output.push('-'); // src--
+        self.output.push_str("]");
+        
+        // Ensure pointer ends at dest
+        self.move_to(dest);
+    }
+
     // Non-destructive copy from src to dest. Pointer ends at dest.
     // This version is much more efficient than the original.
     fn copy_value(&mut self, src: usize, dest: usize) {
@@ -119,7 +144,7 @@ impl BFLCompiler {
         self.move_to(dest);
     }
 
-    /// Peephole optimizer to remove redundant sequences
+    /// Advanced peephole optimizer to remove redundant sequences and optimize patterns
     fn optimize_output(&mut self) {
         let mut optimized = String::new();
         let chars: Vec<char> = self.output.chars().collect();
@@ -152,6 +177,54 @@ impl BFLCompiler {
             if i + 3 < chars.len() && chars[i] == '[' && chars[i + 1] == ']' && chars[i + 2] == '[' && chars[i + 3] == ']' {
                 i += 4; // Skip all four characters
                 continue;
+            }
+            
+            // Optimize clear cell followed by set: [-]+++++ -> [-]
+            if i + 2 < chars.len() && chars[i] == '[' && chars[i + 1] == '-' && chars[i + 2] == ']' {
+                optimized.push_str("[-]");
+                i += 3;
+                
+                // Skip any following + or - characters (they're redundant after clear)
+                while i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                    i += 1;
+                }
+                continue;
+            }
+            
+            // Optimize multiple consecutive + or - into a single character
+            if chars[i] == '+' || chars[i] == '-' {
+                let op = chars[i];
+                let mut count = 0;
+                let mut j = i;
+                while j < chars.len() && chars[j] == op {
+                    count += 1;
+                    j += 1;
+                }
+                
+                // If we have more than 1 consecutive, optimize
+                if count > 1 {
+                    optimized.push_str(&op.to_string().repeat(count));
+                    i = j;
+                    continue;
+                }
+            }
+            
+            // Optimize multiple consecutive > or < into a single character
+            if chars[i] == '>' || chars[i] == '<' {
+                let op = chars[i];
+                let mut count = 0;
+                let mut j = i;
+                while j < chars.len() && chars[j] == op {
+                    count += 1;
+                    j += 1;
+                }
+                
+                // If we have more than 1 consecutive, optimize
+                if count > 1 {
+                    optimized.push_str(&op.to_string().repeat(count));
+                    i = j;
+                    continue;
+                }
             }
             
             optimized.push(chars[i]);
@@ -302,7 +375,8 @@ impl BFLCompiler {
                     self.compile(stmt)?;
                 }
                 
-                self.eval_to_cell(condition, cond_loc)?; // Re-evaluate condition at the end of the loop
+                // Always use non-destructive copy for condition re-evaluation
+                self.eval_to_cell(condition, cond_loc)?;
                 self.move_to(cond_loc);
                 self.output.push(']');
             }

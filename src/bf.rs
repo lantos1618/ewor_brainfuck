@@ -33,6 +33,7 @@ pub struct BF {
     pc: usize,
     output: Vec<u8>,
     mode: Mode,
+    memory_limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -51,6 +52,20 @@ impl BF {
             pc: 0,
             output: Vec::new(),
             mode,
+            memory_limit: None,
+        }
+    }
+
+    pub fn with_memory_limit(code: &str, mode: Mode, limit: usize) -> Self {
+        let cells = vec![0u32; limit];
+        BF {
+            cells,
+            ptr: 0,
+            code: code.chars().collect(),
+            pc: 0,
+            output: Vec::new(),
+            mode,
+            memory_limit: Some(limit),
         }
     }
 
@@ -77,10 +92,13 @@ impl BF {
         }
 
         while self.pc < self.code.len() {
+            let mut jump_was_performed = false;
+            
             let res = match self.mode {
-                Mode::BFA => self.execute_bfa(),
-                Mode::BF => self.execute_bf(),
+                Mode::BFA => self.execute_bfa(&mut jump_was_performed),
+                Mode::BF => self.execute_bf(&mut jump_was_performed),
             };
+            
             if let Err(e) = res {
                 // For debugging: print state on error
                 eprintln!("\nError during execution: {}", e);
@@ -89,16 +107,25 @@ impl BF {
                 eprintln!("Cells around pointer: {:?}", &self.cells[self.ptr.saturating_sub(5)..self.ptr.saturating_add(5)]);
                 return Err(e);
             }
-            self.pc += 1;
+            
+            // Only increment PC if no jump was performed
+            if !jump_was_performed {
+                self.pc += 1;
+            }
         }
         Ok(())
     }
     
-    fn execute_bf(&mut self) -> Result<(), BFError> {
+    fn execute_bf(&mut self, jump_was_performed: &mut bool) -> Result<(), BFError> {
         match self.code[self.pc] {
             '>' => {
                 self.ptr = self.ptr.wrapping_add(1);
                 if self.ptr >= self.cells.len() {
+                    if let Some(limit) = self.memory_limit {
+                        if self.ptr >= limit {
+                            return Err(BFError::MemoryAccess("Memory limit exceeded".to_string()));
+                        }
+                    }
                     self.cells.resize(self.ptr + 1024, 0); // Auto-grow memory
                 }
             }
@@ -137,6 +164,7 @@ impl BF {
                             _ => {}
                         }
                     }
+                    *jump_was_performed = true;
                 }
             }
             ']' => {
@@ -153,9 +181,7 @@ impl BF {
                             _ => {}
                         }
                     }
-                    // BUGFIX: The main loop will increment pc, so we need to
-                    // position it one before the target instruction.
-                    self.pc -= 1;
+                    *jump_was_performed = true;
                 }
                 // Debug: print pointer and cell value after each loop iteration
                 // eprintln!("[BF DEBUG] After loop: ptr={}, cell[ptr]={}", self.ptr, self.cells[self.ptr]);
@@ -166,7 +192,7 @@ impl BF {
     }
 
 
-    fn execute_bfa(&mut self) -> Result<(), BFError> {
+    fn execute_bfa(&mut self, jump_was_performed: &mut bool) -> Result<(), BFError> {
         match self.code[self.pc] {
             '.' => {
                 // Syscall Convention:
@@ -250,7 +276,7 @@ impl BF {
                     }
                 }
             }
-            _ => self.execute_bf(),
+            _ => self.execute_bf(jump_was_performed),
         }
     }
 
