@@ -27,7 +27,7 @@ impl std::fmt::Display for BFError {
 impl std::error::Error for BFError {}
 
 pub struct BF {
-    cells: Vec<u32>,
+    cells: Vec<u8>,
     ptr: usize,
     code: Vec<char>,
     pc: usize,
@@ -44,7 +44,7 @@ pub enum Mode {
 
 impl BF {
     pub fn new(code: &str, mode: Mode) -> Self {
-        let cells = vec![0u32; 65536];
+        let cells = vec![0u8; 65536];
         BF {
             cells,
             ptr: 0,
@@ -57,7 +57,7 @@ impl BF {
     }
 
     pub fn with_memory_limit(code: &str, mode: Mode, limit: usize) -> Self {
-        let cells = vec![0u32; limit];
+        let cells = vec![0u8; limit];
         BF {
             cells,
             ptr: 0,
@@ -69,7 +69,7 @@ impl BF {
         }
     }
 
-    pub fn dump_cells(&self, n: usize) -> &[u32] {
+    pub fn dump_cells(&self, n: usize) -> &[u8] {
         &self.cells[..n.min(self.cells.len())]
     }
 
@@ -148,7 +148,7 @@ impl BF {
                 std::io::stdin()
                     .read_exact(&mut buf)
                     .map_err(|e| BFError::SyscallFailed(format!("Input failed: {}", e)))?;
-                self.cells[self.ptr] = buf[0] as u32;
+                self.cells[self.ptr] = buf[0] as u8;
             }
             '[' => {
                 if self.cells[self.ptr] == 0 {
@@ -210,51 +210,41 @@ impl BF {
                     self.cells[6] as usize,
                 ];
 
-                // In test mode, reject socket operations
-                #[cfg(test)]
-                {
-                    if syscall_num == SYS_SOCKET as u32 {
-                        return Err(BFError::InvalidSyscall(
-                            "Permission denied: socket operations not allowed in test mode".to_string(),
-                        ));
-                    }
-                }
-
-                self.validate_syscall(syscall_num, &args)?;
+                self.validate_syscall(syscall_num as u32, &args)?;
 
                 let result = unsafe {
                     match syscall_num {
-                        x if x == SYS_WRITE as u32 => {
+                        x if x == SYS_WRITE as u8 => {
                             let fd = args[0];
-                            let buf_ptr = &self.cells[args[1]] as *const u32 as *const u8;
+                            let buf_ptr = self.cells.as_ptr().add(args[1]);
                             let count = args[2];
                             syscalls::syscall!(Sysno::write, fd, buf_ptr, count)
                         }
-                        x if x == SYS_SOCKET as u32 => {
-                            syscalls::syscall!(Sysno::socket, args[0], args[1], args[2])
-                        }
-                        x if x == SYS_BIND as u32 => {
+                        x if x == SYS_READ as u8 => {
                             let fd = args[0];
-                            let sockaddr_ptr = &self.cells[args[1]] as *const u32 as *const u8;
-                            let len = args[2];
-                            syscalls::syscall!(Sysno::bind, fd, sockaddr_ptr, len)
-                        }
-                        x if x == SYS_LISTEN as u32 => {
-                            syscalls::syscall!(Sysno::listen, args[0], args[1])
-                        }
-                        x if x == SYS_ACCEPT as u32 => {
-                            let fd = args[0];
-                            let sockaddr_ptr = &mut self.cells[args[1]] as *mut u32 as *mut u8;
-                            let len_ptr = &mut self.cells[args[2]] as *mut u32;
-                            syscalls::syscall!(Sysno::accept, fd, sockaddr_ptr, len_ptr)
-                        }
-                        x if x == SYS_READ as u32 => {
-                            let fd = args[0];
-                            let buf_ptr = &mut self.cells[args[1]] as *mut u32 as *mut u8;
+                            let buf_ptr = self.cells.as_mut_ptr().add(args[1]);
                             let count = args[2];
                             syscalls::syscall!(Sysno::read, fd, buf_ptr, count)
                         }
-                        x if x == SYS_CLOSE as u32 => {
+                        x if x == SYS_SOCKET as u8 => {
+                            syscalls::syscall!(Sysno::socket, args[0], args[1], args[2])
+                        }
+                        x if x == SYS_BIND as u8 => {
+                            let fd = args[0];
+                            let sockaddr_ptr = self.cells.as_ptr().add(args[1]);
+                            let len = args[2];
+                            syscalls::syscall!(Sysno::bind, fd, sockaddr_ptr, len)
+                        }
+                        x if x == SYS_LISTEN as u8 => {
+                            syscalls::syscall!(Sysno::listen, args[0], args[1])
+                        }
+                        x if x == SYS_ACCEPT as u8 => {
+                            let fd = args[0];
+                            let sockaddr_ptr = self.cells.as_mut_ptr().add(args[1]);
+                            let len_ptr = self.cells.as_mut_ptr().add(args[2]);
+                            syscalls::syscall!(Sysno::accept, fd, sockaddr_ptr, len_ptr)
+                        }
+                        x if x == SYS_CLOSE as u8 => {
                             syscalls::syscall!(Sysno::close, args[0])
                         }
                         _ => {
@@ -265,7 +255,7 @@ impl BF {
 
                 match result {
                     Ok(val) => {
-                        self.cells[0] = val as u32;
+                        self.cells[0] = val as u8;
                         Ok(())
                     }
                     Err(e) => {
