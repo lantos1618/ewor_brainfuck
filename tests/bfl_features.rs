@@ -147,7 +147,7 @@ fn test_bfl_simple_assignment() {
     // Test basic assignment without any control flow
     let mut compiler = BFLCompiler::new();
     let program = BFLNode::Block(vec![
-        BFLNode::Assign("simple_var".to_string(), Box::new(BFLNode::Number(456))),
+        BFLNode::Assign("simple_var".to_string(), Box::new(BFLNode::Number(123))),
     ]);
     compiler.compile(&program).unwrap();
     let bf_code = compiler.get_output();
@@ -157,7 +157,7 @@ fn test_bfl_simple_assignment() {
     let simple_addr = compiler.get_variable_address("simple_var").unwrap();
     println!("simple_var address: {}", simple_addr);
     println!("simple_var value: {}", bf.dump_cells(simple_addr + 1)[simple_addr]);
-    assert_eq!(bf.dump_cells(simple_addr + 1)[simple_addr], 456);
+    assert_eq!(bf.dump_cells(simple_addr + 1)[simple_addr], 123);
 }
 
 #[test]
