@@ -278,7 +278,7 @@ impl BFLCompiler {
 
     /// Evaluate an expression, storing its final value in the specified cell.
     /// The pointer will end at the `dest` cell.
-    fn eval_to_cell(&mut self, expr: &BFLNode, dest: usize) -> Result<(), String> {
+    fn eval_to_cell(&mut self, expr: &BFLNode, dest: usize, variable_name: Option<&str>) -> Result<(), String> {
         match expr {
             BFLNode::Number(n) => {
                 self.move_to(dest);
@@ -298,14 +298,25 @@ impl BFLCompiler {
                 }
             }
             BFLNode::String(s) => {
-                self.eval_to_cell(&BFLNode::Bytes(s.as_bytes().to_vec()), dest)?;
+                self.eval_to_cell(&BFLNode::Bytes(s.as_bytes().to_vec()), dest, variable_name)?;
             }
             BFLNode::Bytes(bytes) => {
+                // Always allocate a pointer cell for the variable name
+                let pointer_cell = if let Some(var_name) = variable_name {
+                    *self.variables.entry(var_name.to_string()).or_insert_with(|| {
+                        let loc = self.next_var_location;
+                        self.next_var_location += 1;
+                        loc
+                    })
+                } else {
+                    dest
+                };
+                // Allocate buffer data after the pointer
                 let data_location = self.next_var_location;
                 self.next_var_location += bytes.len();
 
-                // Store pointer to data in the dest cell
-                self.move_to(dest);
+                // Store pointer to data in the pointer cell
+                self.move_to(pointer_cell);
                 self.output.push_str("[-]");
                 self.output.push_str(&"+".repeat(data_location));
 
@@ -315,11 +326,11 @@ impl BFLCompiler {
                     self.output.push_str("[-]");
                     self.output.push_str(&"+".repeat(*byte as usize));
                 }
-                self.move_to(dest); // Leave pointer at the destination (which now holds the address)
+                self.move_to(pointer_cell); // Leave pointer at the pointer cell
             }
             BFLNode::Add(lhs, rhs) => {
-                self.eval_to_cell(lhs, dest)?; // Evaluate LHS into dest
-                self.eval_to_cell(rhs, SCRATCH_1)?; // Evaluate RHS into scratch
+                self.eval_to_cell(lhs, dest, variable_name)?; // Evaluate LHS into dest
+                self.eval_to_cell(rhs, SCRATCH_1, variable_name)?; // Evaluate RHS into scratch
                 
                 // Add SCRATCH_1 to dest using optimized pattern
                 self.move_to(SCRATCH_1);
@@ -332,8 +343,8 @@ impl BFLCompiler {
                 self.move_to(dest);
             }
             BFLNode::Sub(lhs, rhs) => {
-                self.eval_to_cell(lhs, dest)?; // Evaluate LHS into dest
-                self.eval_to_cell(rhs, SCRATCH_1)?; // Evaluate RHS into scratch
+                self.eval_to_cell(lhs, dest, variable_name)?; // Evaluate LHS into dest
+                self.eval_to_cell(rhs, SCRATCH_1, variable_name)?; // Evaluate RHS into scratch
                 
                 // Subtract SCRATCH_1 from dest (clamping at 0)
                 self.move_to(SCRATCH_1);
@@ -363,11 +374,11 @@ impl BFLCompiler {
                     self.next_var_location += 1;
                     loc
                 });
-                self.eval_to_cell(expr, location)?;
+                self.eval_to_cell(expr, location, Some(name))?;
             }
             BFLNode::While(condition, body) => {
                 let cond_loc = SCRATCH_2;
-                self.eval_to_cell(condition, cond_loc)?; // Initial condition check
+                self.eval_to_cell(condition, cond_loc, None)?; // Initial condition check
                 self.move_to(cond_loc);
                 self.output.push('['); // Loop while condition is non-zero
                 
@@ -376,13 +387,13 @@ impl BFLCompiler {
                 }
                 
                 // Always use non-destructive copy for condition re-evaluation
-                self.eval_to_cell(condition, cond_loc)?;
+                self.eval_to_cell(condition, cond_loc, None)?;
                 self.move_to(cond_loc);
                 self.output.push(']');
             }
             BFLNode::If(condition, body) => {
                 let cond_loc = SCRATCH_2;
-                self.eval_to_cell(condition, cond_loc)?;
+                self.eval_to_cell(condition, cond_loc, None)?;
                 self.move_to(cond_loc);
                 self.output.push('['); // If condition is non-zero
                 
@@ -397,7 +408,7 @@ impl BFLCompiler {
             }
             BFLNode::Syscall(syscall_no, args) => {
                 // Evaluate syscall number into cell 7
-                self.eval_to_cell(syscall_no, 7)?;
+                self.eval_to_cell(syscall_no, 7, None)?;
 
                 // Evaluate arguments into cells 1-6
                 for (i, arg) in args.iter().enumerate() {
@@ -405,7 +416,7 @@ impl BFLCompiler {
                         return Err("Too many syscall arguments (max 6)".to_string());
                     }
                     let arg_cell = i + 1;
-                    self.eval_to_cell(arg, arg_cell)?;
+                    self.eval_to_cell(arg, arg_cell, None)?;
                 }
 
                 // Execute syscall
